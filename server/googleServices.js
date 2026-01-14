@@ -107,28 +107,34 @@ export async function appendToSheet(auth, invoiceData, driveLink) {
     const sheets = google.sheets({ version: 'v4', auth })
     const spreadsheetId = process.env.GOOGLE_SHEET_ID
 
-    // Format date for Sheet (DD-MMM-YYYY or ISO preferred by user?)
-    // Using simple YYYY-MM-DD for now as per invoiceData
-    const formattedDate = invoiceData.issue_date
+    // Format date: YYYY-MM-DD -> DD-MMM-YYYY (e.g. 14-Jan-2025)
+    let formattedDate = ''
+    if (invoiceData.issue_date) {
+        const d = new Date(invoiceData.issue_date)
+        const day = String(d.getDate()).padStart(2, '0')
+        const month = d.toLocaleString('default', { month: 'short' })
+        const year = d.getFullYear()
+        formattedDate = `${day}-${month}-${year}`
+    }
 
-    // Prepare row data
+    // Prepare row data (Columns A-J)
     const rowData = [
-        invoiceData.routing.folderName || 'Unknown', // Company (Entity)
-        invoiceData.supplier_name || '',   // Supplier
-        invoiceData.invoice_number || '', // Invoice #
-        formattedDate || '',              // Date
-        invoiceData.description || '',    // Description
-        invoiceData.total_amount || 0,    // Total
-        invoiceData.currency || 'EUR',    // Currency
-        driveLink || '',                  // PDF Link
-        invoiceData.confidence || '',     // Confidence
-        new Date().toISOString()          // Processed At
+        invoiceData.routing.folderName || 'Unknown',      // A: Company
+        invoiceData.supplier_name || '',                  // B: Supplier
+        invoiceData.invoice_number || '',                 // C: Invoice #
+        formattedDate || '',                              // D: Issue Date
+        (invoiceData.description || '').split(' ').slice(0, 5).join(' '), // E: Description (Max 5 words)
+        invoiceData.amount_excl_vat || 0,                 // F: Excl VAT
+        invoiceData.vat_amount || 0,                      // G: VAT Amount
+        invoiceData.total_amount || 0,                    // H: Incl VAT
+        driveLink || '',                                  // I: Invoice Link
+        invoiceData.notes || ''                           // J: Notes
     ]
 
     try {
         const response = await sheets.spreadsheets.values.append({
             spreadsheetId,
-            range: 'Sheet1!A:J', // Adjust if columns change
+            range: 'Sheet1!A3:J', // Append starting from A3 (implies headers in 1-2)
             valueInputOption: 'USER_ENTERED',
             insertDataOption: 'INSERT_ROWS',
             resource: {

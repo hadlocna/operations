@@ -44,12 +44,15 @@ export async function processInvoice(fileBuffer, originalFilename) {
                     - is_invoice_document (boolean): true if it looks like an invoice/receipt
                     - invoice_number (string or null)
                     - issue_date (YYYY-MM-DD or null)
-                    - total_amount (number or null)
+                    - total_amount (number or null): Amount INCL VAT
+                    - amount_excl_vat (number or null): Amount BEFORE VAT
+                    - vat_amount (number or null): The tax amount
                     - currency (string, e.g. EUR)
                     - supplier_name (string): The vendor/company issuing the invoice.
                     - customer_name (string): The company being billed.
                     - line_items_present (boolean): true if there are line items.
-                    - description (string): Short summary of goods/services.
+                    - description (string): A short summary of services/items. MAX 5 WORDS.
+                    - notes (string): Any special terms, discounts, or flags.
                     `
                 },
                 {

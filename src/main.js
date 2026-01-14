@@ -4,9 +4,7 @@ import './style.css'
 const state = {
   isLoggedIn: false,
   oauth: {
-    gmail: false,
-    drive: false,
-    sheets: false
+    connected: false // Unified status
   },
   scanEnabled: true,
   scanFrequency: '2',
@@ -17,6 +15,11 @@ const APP_PASSWORD = 'leanne'
 
 // ==================== RENDER FUNCTIONS ====================
 const app = document.querySelector('#app')
+
+// Helper for Lucide icons
+const createIcons = () => {
+  if (window.lucide) window.lucide.createIcons()
+}
 
 function renderLogin() {
   app.innerHTML = `
@@ -44,22 +47,15 @@ function renderLogin() {
     </div>
   `
 
-  // Lucide icons not needed here as we used image logo
   document.getElementById('login-form').addEventListener('submit', handleLogin)
 }
 
 function renderDashboard() {
-  const gmailStatus = state.oauth.gmail
-  const driveStatus = state.oauth.drive
-  const sheetsStatus = state.oauth.sheets
+  const isConnected = state.oauth.connected
 
   // Calculate dynamic stats
   const completed = state.logs.filter(l => l.status === 'success').length
   const pending = state.logs.filter(l => l.status === 'processing').length
-
-  // Calculate today's total
-  const today = new Date().toISOString().split('T')[0]
-  const todayCount = state.logs.filter(l => l.date === today).length
 
   app.innerHTML = `
     <!-- Main Dashboard -->
@@ -76,16 +72,8 @@ function renderDashboard() {
           <div class="flex items-center gap-4">
             <div class="hidden md:flex items-center gap-6 px-4 py-1.5 bg-slate-50 rounded-full border border-slate-100">
               <div class="flex items-center gap-2 text-xs font-semibold">
-                <span class="w-2 h-2 rounded-full ${gmailStatus ? 'bg-green-500 status-pulse shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-300'}"></span>
-                <span class="text-slate-500 uppercase tracking-wider">Gmail</span>
-              </div>
-              <div class="flex items-center gap-2 text-xs font-semibold">
-                <span class="w-2 h-2 rounded-full ${driveStatus ? 'bg-green-500 status-pulse shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-300'}"></span>
-                <span class="text-slate-500 uppercase tracking-wider">Drive</span>
-              </div>
-              <div class="flex items-center gap-2 text-xs font-semibold">
-                <span class="w-2 h-2 rounded-full ${sheetsStatus ? 'bg-green-500 status-pulse shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-amber-400'}"></span>
-                <span class="text-slate-500 uppercase tracking-wider">Sheets</span>
+                <span class="w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 status-pulse shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-300'}"></span>
+                <span class="text-slate-500 uppercase tracking-wider">Services</span>
               </div>
             </div>
             <button class="p-2 text-slate-400 hover:bg-slate-50 hover:text-slate-600 rounded-full transition-colors relative">
@@ -101,15 +89,15 @@ function renderDashboard() {
 
       <main class="max-w-7xl mx-auto px-4 mt-8">
         
-        <!-- Warning Alert (Only if Sheets not connected) -->
-        ${!sheetsStatus ? `
+        <!-- Warning Alert (Only if Not connected) -->
+        ${!isConnected ? `
         <div class="mb-8 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-4 animate-fade-in-up">
           <div class="text-amber-600 mt-0.5">
             <i data-lucide="alert-triangle" class="w-5 h-5"></i>
           </div>
           <div>
             <h4 class="font-semibold text-amber-900 text-sm">System Configuration Required</h4>
-            <p class="text-amber-700 text-xs mt-1">Google Sheets connection is missing. Data will not be logged correctly.</p>
+            <p class="text-amber-700 text-xs mt-1">Google Services Disconnected. Please connect to enable scanning.</p>
           </div>
           <button id="configBtn" class="ml-auto text-xs font-bold text-amber-800 bg-amber-100 px-3 py-1.5 rounded-lg hover:bg-amber-200 transition-colors uppercase tracking-tight">Connect Now</button>
         </div>` : ''}
@@ -159,7 +147,6 @@ function renderDashboard() {
           </div>
         </div>
 
-
         <!-- Controls and Filter -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
           
@@ -197,29 +184,20 @@ function renderDashboard() {
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
               <h3 class="font-bold text-lg mb-4 flex items-center gap-2 text-slate-800">
                 <i data-lucide="link" class="w-5 h-5 text-slate-400"></i>
-                Service OAuth
+                Service Connection
               </h3>
               <div class="space-y-3">
-                <div class="flex items-center justify-between p-3 ${gmailStatus ? 'bg-green-50 border-green-100' : 'bg-slate-50 border-slate-200'} rounded-xl border">
+                <div class="flex items-center justify-between p-3 ${isConnected ? 'bg-green-50 border-green-100' : 'bg-slate-50 border-slate-200'} rounded-xl border">
                   <div class="flex items-center gap-3">
-                    <i data-lucide="mail" class="w-5 h-5 ${gmailStatus ? 'text-green-600' : 'text-slate-400'}"></i>
-                    <span class="text-sm font-medium ${gmailStatus ? 'text-green-800' : 'text-slate-600'}">${gmailStatus ? 'Gmail Connected' : 'Gmail'}</span>
+                    <div class="p-2 bg-white rounded-lg border border-slate-200 shadow-sm">
+                      <img src="https://www.gstatic.com/images/branding/product/1x/googleg_48dp.png" class="w-5 h-5" alt="Google">
+                    </div>
+                    <div>
+                        <span class="block text-sm font-bold ${isConnected ? 'text-green-800' : 'text-slate-700'}">${isConnected ? 'Google Connected' : 'Google Account'}</span>
+                        <span class="text-[10px] text-slate-500 font-medium tracking-tight">Gmail • Drive • Sheets</span>
+                    </div>
                   </div>
-                  <button class="oauth-btn text-xs font-bold ${gmailStatus ? 'text-green-700 hover:underline' : 'text-blue-600 px-3 py-1 bg-white rounded-lg border border-blue-200 hover:bg-blue-50'}" data-service="gmail">${gmailStatus ? 'REVOKE' : 'CONNECT'}</button>
-                </div>
-                <div class="flex items-center justify-between p-3 ${driveStatus ? 'bg-green-50 border-green-100' : 'bg-slate-50 border-slate-200'} rounded-xl border">
-                  <div class="flex items-center gap-3">
-                    <i data-lucide="database" class="w-5 h-5 ${driveStatus ? 'text-green-600' : 'text-slate-400'}"></i>
-                    <span class="text-sm font-medium ${driveStatus ? 'text-green-800' : 'text-slate-600'}">${driveStatus ? 'Drive Connected' : 'Drive'}</span>
-                  </div>
-                  <button class="oauth-btn text-xs font-bold ${driveStatus ? 'text-green-700 hover:underline' : 'text-blue-600 px-3 py-1 bg-white rounded-lg border border-blue-200 hover:bg-blue-50'}" data-service="drive">${driveStatus ? 'REVOKE' : 'CONNECT'}</button>
-                </div>
-                <div class="flex items-center justify-between p-3 ${sheetsStatus ? 'bg-green-50 border-green-100' : 'bg-amber-50 border-amber-100'} rounded-xl border">
-                  <div class="flex items-center gap-3">
-                    <i data-lucide="file-spreadsheet" class="w-5 h-5 ${sheetsStatus ? 'text-green-600' : 'text-amber-600'}"></i>
-                    <span class="text-sm font-medium ${sheetsStatus ? 'text-green-800' : 'text-amber-800'}">${sheetsStatus ? 'Sheets Connected' : 'Sheets Auth Expired'}</span>
-                  </div>
-                  <button class="oauth-btn text-xs font-bold ${sheetsStatus ? 'text-green-700 hover:underline' : 'text-amber-700 px-3 py-1 bg-white rounded-lg border border-amber-200 hover:bg-amber-100'}" data-service="sheets">${sheetsStatus ? 'REVOKE' : 'CONNECT'}</button>
+                  <button class="oauth-btn text-xs font-bold ${isConnected ? 'text-green-700 hover:underline' : 'text-blue-600 px-3 py-1.5 bg-blue-50 rounded-lg border border-blue-100 hover:bg-blue-100'}" data-service="google">${isConnected ? 'REVOKE' : 'CONNECT'}</button>
                 </div>
               </div>
             </div>
@@ -274,7 +252,7 @@ function renderDashboard() {
     </div>
   `
 
-  lucide.createIcons()
+  createIcons()
   attachDashboardListeners()
 }
 
@@ -333,8 +311,6 @@ function handleLogin(e) {
     document.getElementById('passwordInput').value = ''
   }
 }
-
-// ... (previous functions remain the same)
 
 function attachDashboardListeners() {
   // Logout
@@ -401,7 +377,7 @@ async function triggerRealScan() {
 
   btn.disabled = true
   btn.innerHTML = `<i data-lucide="refresh-cw" class="w-4 h-4 animate-spin"></i> Scanning Gmail...`
-  lucide.createIcons()
+  createIcons()
 
   try {
     const response = await fetch('/api/scan', {
@@ -417,10 +393,7 @@ async function triggerRealScan() {
 
     if (result.success) {
       showToast(`Scan complete: ${result.processed.length} processed`)
-      // Refresh log
-      // For MVP we just reload to fetch new state if persisted but we don't have persistence fetch yet?
-      // Actually we should just update dashboard if we had state management.
-      // For now, reload window is safest
+      // Refresh log but wait a bit
       setTimeout(() => window.location.reload(), 2000)
     } else {
       showToast('Scan failed: ' + (result.error || 'Unknown error'))
@@ -432,7 +405,7 @@ async function triggerRealScan() {
     if (btn) {
       btn.disabled = false
       btn.innerHTML = originalHTML
-      lucide.createIcons()
+      createIcons()
     }
   }
 }
@@ -455,10 +428,8 @@ async function checkStatus() {
   try {
     const res = await fetch('/api/status')
     const data = await res.json()
-    state.oauth.gmail = data.gmail
-    state.oauth.drive = data.drive
-    state.sheetsStatus = data.sheets // Note: keys might differ slightly in logic, updating to match
-    state.oauth.sheets = data.sheets
+    // Unified status
+    state.oauth.connected = data.connected
   } catch (e) {
     console.error('Failed to fetch status')
   }
