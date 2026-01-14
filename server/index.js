@@ -21,7 +21,7 @@ app.use(express.json())
 const SCOPES = [
     'https://www.googleapis.com/auth/gmail.readonly',
     'https://www.googleapis.com/auth/gmail.labels',
-    'https://www.googleapis.com/auth/drive.file',
+    'https://www.googleapis.com/auth/drive',
     'https://www.googleapis.com/auth/spreadsheets'
 ]
 
@@ -167,7 +167,13 @@ app.post('/api/scan', async (req, res) => {
                         // Upload Drive
                         const driveAuth = new google.auth.OAuth2()
                         driveAuth.setCredentials(tokens.drive)
-                        const driveResult = await uploadToDrive(driveAuth, pdfBuffer, filename, invoiceData.company || 'Unknown', invoiceData.issue_date)
+                        const driveResult = await uploadToDrive(
+                            driveAuth,
+                            pdfBuffer,
+                            filename,
+                            invoiceData.routing, // pass the full routing object (category, folderName)
+                            invoiceData.issue_date
+                        )
 
                         // Sheets
                         const sheetsAuth = new google.auth.OAuth2()

@@ -1,60 +1,61 @@
 import { google } from 'googleapis'
 import { config } from 'dotenv'
+import { Readable } from 'stream'
 
 config()
 
 /**
- * Upload a file to Google Drive
+ * Upload a file to Google Drive with dynamic routing
  * @param {Object} auth - OAuth2 client
  * @param {Buffer} fileBuffer - File buffer
  * @param {string} filename - File name
- * @param {string} company - Company name for folder routing
- * @param {string} invoiceDate - Invoice date for subfolder (YYYY-MM)
+ * @param {Object} routingData - Routing info { category, folderName }
+ * @param {string} issueDate - Invoice date for subfolder
  * @returns {Object} Upload result with file ID and link
  */
-export async function uploadToDrive(auth, fileBuffer, filename, company, invoiceDate) {
+export async function uploadToDrive(auth, fileBuffer, filename, routingData, issueDate) {
     const drive = google.drive({ version: 'v3', auth })
 
-    // Parse date to get year-month
-    const date = new Date(invoiceDate)
-    const yearMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+    // Parse Date for Month Folder
+    // Format: "MM - MonthName" (e.g., "03 - March")
+    const dateObj = issueDate ? new Date(issueDate) : new Date()
+    const monthNum = String(dateObj.getMonth() + 1).padStart(2, '0')
+    const monthName = dateObj.toLocaleString('default', { month: 'long' })
+    const monthFolder = `${monthNum} - ${monthName}`
 
-    // Get or create company folder
-    const companyFolder = await getOrCreateFolder(drive, company, process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID)
+    const rootFolderId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID
 
-    // Get or create month subfolder
-    const monthFolder = await getOrCreateFolder(drive, yearMonth, companyFolder.id)
+    // 1. Get/Create Category Folder (e.g., "SPVs_AgriOps")
+    const categoryFolderId = await getOrCreateFolder(drive, routingData.category, rootFolderId)
 
-    // Upload file
+    // 2. Get/Create Company Folder (e.g., "AMANDEL")
+    const companyFolderId = await getOrCreateFolder(drive, routingData.folderName, categoryFolderId)
+
+    // 3. Get/Create Month Folder (e.g., "03 - March")
+    const finalFolderId = await getOrCreateFolder(drive, monthFolder, companyFolderId)
+
+    // 4. Upload File
     const fileMetadata = {
         name: filename,
-        parents: [monthFolder.id]
+        parents: [finalFolderId]
     }
 
     const media = {
         mimeType: 'application/pdf',
-        body: Buffer.from(fileBuffer)
+        body: Readable.from(fileBuffer)
     }
-
-    // Convert buffer to stream for upload
-    const { Readable } = await import('stream')
-    const stream = new Readable()
-    stream.push(fileBuffer)
-    stream.push(null)
 
     const file = await drive.files.create({
         resource: fileMetadata,
-        media: {
-            mimeType: 'application/pdf',
-            body: stream
-        },
-        fields: 'id, webViewLink'
+        media: media,
+        fields: 'id, webViewLink, parents'
     })
 
     return {
         fileId: file.data.id,
         webViewLink: file.data.webViewLink,
-        folderPath: `${company}/${yearMonth}/${filename}`
+        folderPath: `${routingData.category}/${routingData.folderName}/${monthFolder}/${filename}`,
+        finalFolderId: finalFolderId
     }
 }
 
@@ -62,93 +63,86 @@ export async function uploadToDrive(auth, fileBuffer, filename, company, invoice
  * Get or create a folder in Drive
  */
 async function getOrCreateFolder(drive, folderName, parentId) {
+    if (!parentId) {
+        throw new Error('Parent Folder ID is required for ' + folderName)
+    }
+
     // Search for existing folder
-    const query = parentId
-        ? `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`
-        : `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`
+    const query = `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`
 
-    const response = await drive.files.list({
-        q: query,
-        fields: 'files(id, name)',
-        spaces: 'drive'
-    })
+    try {
+        const response = await drive.files.list({
+            q: query,
+            fields: 'files(id, name)',
+            spaces: 'drive'
+        })
 
-    if (response.data.files.length > 0) {
-        return response.data.files[0]
+        if (response.data.files.length > 0) {
+            return response.data.files[0].id
+        }
+
+        // Create new folder
+        const folderMetadata = {
+            name: folderName,
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: [parentId]
+        }
+
+        const folder = await drive.files.create({
+            resource: folderMetadata,
+            fields: 'id'
+        })
+
+        return folder.data.id
+    } catch (e) {
+        console.error(`Error finding/creating folder ${folderName}:`, e)
+        throw e
     }
-
-    // Create new folder
-    const folderMetadata = {
-        name: folderName,
-        mimeType: 'application/vnd.google-apps.folder',
-        parents: parentId ? [parentId] : []
-    }
-
-    const folder = await drive.files.create({
-        resource: folderMetadata,
-        fields: 'id, name'
-    })
-
-    return folder.data
 }
 
 /**
  * Append invoice data to Google Sheet
- * @param {Object} auth - OAuth2 client
- * @param {Object} invoiceData - Extracted invoice data
- * @param {string} driveLink - Link to the PDF in Drive
- * @returns {Object} Append result
  */
 export async function appendToSheet(auth, invoiceData, driveLink) {
     const sheets = google.sheets({ version: 'v4', auth })
     const spreadsheetId = process.env.GOOGLE_SHEET_ID
 
-    // Format date for sheet (DD-MMM-YYYY)
+    // Format date for Sheet (DD-MMM-YYYY or ISO preferred by user?)
+    // Using simple YYYY-MM-DD for now as per invoiceData
     const formattedDate = invoiceData.issue_date
 
-    // Prepare row data based on PRD schema
+    // Prepare row data
     const rowData = [
-        invoiceData.company || '',
-        invoiceData.supplier || '',
-        invoiceData.invoice_number || '',
-        formattedDate || '',
-        invoiceData.description || '',
-        invoiceData.amount_excl_vat || 0,
-        invoiceData.vat_amount || 0,
-        invoiceData.amount_incl_vat || 0,
-        driveLink || '',
-        invoiceData.notes || ''
+        invoiceData.routing.folderName || 'Unknown', // Company (Entity)
+        invoiceData.supplier_name || '',   // Supplier
+        invoiceData.invoice_number || '', // Invoice #
+        formattedDate || '',              // Date
+        invoiceData.description || '',    // Description
+        invoiceData.total_amount || 0,    // Total
+        invoiceData.currency || 'EUR',    // Currency
+        driveLink || '',                  // PDF Link
+        invoiceData.confidence || '',     // Confidence
+        new Date().toISOString()          // Processed At
     ]
 
-    const response = await sheets.spreadsheets.values.append({
-        spreadsheetId,
-        range: 'Sheet1!A:J',
-        valueInputOption: 'USER_ENTERED',
-        insertDataOption: 'INSERT_ROWS',
-        resource: {
-            values: [rowData]
+    try {
+        const response = await sheets.spreadsheets.values.append({
+            spreadsheetId,
+            range: 'Sheet1!A:J', // Adjust if columns change
+            valueInputOption: 'USER_ENTERED',
+            insertDataOption: 'INSERT_ROWS',
+            resource: {
+                values: [rowData]
+            }
+        })
+
+        return {
+            updatedRange: response.data.updates.updatedRange,
+            updatedRows: response.data.updates.updatedRows
         }
-    })
-
-    return {
-        updatedRange: response.data.updates.updatedRange,
-        updatedRows: response.data.updates.updatedRows
+    } catch (e) {
+        console.error('Sheet Append Error:', e)
+        // Don't fail the whole process if sheet fails
+        return { error: e.message }
     }
-}
-
-/**
- * Get folder structure from Drive
- */
-export async function getFolderStructure(auth, parentId = null) {
-    const drive = google.drive({ version: 'v3', auth })
-
-    const folderId = parentId || process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID
-
-    const response = await drive.files.list({
-        q: `'${folderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-        fields: 'files(id, name)',
-        orderBy: 'name'
-    })
-
-    return response.data.files
 }
