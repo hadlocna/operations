@@ -104,7 +104,7 @@ function renderDashboard() {
             <div class="bg-blue-600 p-1.5 rounded-lg text-white">
               <i data-lucide="layers" class="w-5 h-5"></i>
             </div>
-            <span class="font-bold text-xl tracking-tight text-slate-800">InvoFlow <span class="text-blue-600 text-sm font-medium">AI v5.2</span></span>
+            <span class="font-bold text-xl tracking-tight text-slate-800">Pela Terra <span class="text-blue-600 text-sm font-medium">Operations</span></span>
           </div>
 
           <!-- Connection States -->
