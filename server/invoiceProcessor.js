@@ -29,22 +29,53 @@ const COMPANIES = {
     ]
 }
 
+import pdf2img from 'pdf-img-convert'
+
+// ...
+
 export async function processInvoice(fileBuffer, originalFilename) {
     try {
-        const base64Image = fileBuffer.toString('base64')
+        // 1. Convert PDF to Images (PNG)
+        // Returns an array of Uint8Array or Buffer
+        const pngPages = await pdf2img.convert(fileBuffer, {
+            width: 1536, // High resolution for readability
+            height: 2048,
+            page_numbers: [1, 2] // Limit to first 2 pages to save tokens/time
+        })
 
-        // 1. Extract Data with GPT-4o
+        if (pngPages.length === 0) {
+            return { success: false, reason: "Could not convert PDF to image" }
+        }
+
+        // Prepare content array for GPT-4o
+        // Start with the system/user instruction prompt
+        const content = [
+            { type: "text", text: "Extract data from this invoice. If it is multi-page, treat it as a single document." }
+        ]
+
+        // Add each page as an image
+        for (const pageBuffer of pngPages) {
+            const base64Image = Buffer.from(pageBuffer).toString('base64')
+            content.push({
+                type: "image_url",
+                image_url: {
+                    url: `data:image/png;base64,${base64Image}`
+                }
+            })
+        }
+
+        // 2. Extract Data with GPT-4o
         const completion = await openai.chat.completions.create({
             model: "gpt-4o",
             messages: [
                 {
                     role: "system",
                     content: `You are an invoice processing assistant. 
-                    Analyze the document and extract the following JSON fields:
+                    Analyze the document images and extract the following JSON fields:
                     - is_invoice_document (boolean): true if it looks like an invoice/receipt
                     - invoice_number (string or null)
                     - issue_date (YYYY-MM-DD or null)
-                    - total_amount (number or null): Amount INCL VAT
+                    - total_amount (number or null): Amount INCL VAT. Look for "Total", "TOTAL", "Montante Total".
                     - amount_excl_vat (number or null): Amount BEFORE VAT
                     - vat_amount (number or null): The tax amount
                     - currency (string, e.g. EUR)
@@ -57,10 +88,7 @@ export async function processInvoice(fileBuffer, originalFilename) {
                 },
                 {
                     role: "user",
-                    content: [
-                        { type: "text", text: "Extract data from this invoice." },
-                        { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
-                    ]
+                    content: content
                 }
             ],
             response_format: { type: "json_object" }
