@@ -2,6 +2,11 @@ import express from 'express'
 import cors from 'cors'
 import { config } from 'dotenv'
 import { google } from 'googleapis'
+import { JSONFilePreset } from 'lowdb/node'
+import path from 'path'
+import { fileURLToPath } from 'url'
+import { processInvoice } from './invoiceProcessor.js'
+import { uploadToDrive, appendToSheet } from './googleServices.js'
 
 config()
 
@@ -12,36 +17,29 @@ const PORT = process.env.PORT || 3001
 app.use(cors({ origin: 'http://localhost:5173', credentials: true }))
 app.use(express.json())
 
-// Store tokens in memory (in production, use a database)
-const tokens = {
-    gmail: null,
-    drive: null,
-    sheets: null
-}
-
-// OAuth2 Client
-const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
-)
-
-// Scopes for Gmail, Drive, and Sheets
+// Google Auth Config
 const SCOPES = [
     'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.labels',
     'https://www.googleapis.com/auth/drive.file',
     'https://www.googleapis.com/auth/spreadsheets'
 ]
 
-// ==================== ROUTES ====================
+// Initialize Lowdb
+const defaultData = {
+    tokens: {
+        gmail: null,
+        drive: null,
+        sheets: null
+    }
+}
+const db = await JSONFilePreset('db.json', defaultData)
+let tokens = db.data.tokens
 
-// Health check
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() })
-})
+// Status Endpoint
+app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }))
 
-// Get OAuth status
-app.get('/api/oauth/status', (req, res) => {
+app.get('/api/status', (req, res) => {
     res.json({
         gmail: !!tokens.gmail,
         drive: !!tokens.drive,
@@ -49,7 +47,13 @@ app.get('/api/oauth/status', (req, res) => {
     })
 })
 
-// Initiate OAuth flow
+const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+)
+
+// Auth Routes
 app.get('/auth/google', (req, res) => {
     const authUrl = oauth2Client.generateAuthUrl({
         access_type: 'offline',
@@ -59,139 +63,76 @@ app.get('/auth/google', (req, res) => {
     res.redirect(authUrl)
 })
 
-// OAuth callback
 app.get('/auth/google/callback', async (req, res) => {
     const { code } = req.query
-
     try {
         const { tokens: newTokens } = await oauth2Client.getToken(code)
-        oauth2Client.setCredentials(newTokens)
 
-        // Store tokens for all services
+        // Save tokens for all services
         tokens.gmail = newTokens
         tokens.drive = newTokens
         tokens.sheets = newTokens
 
-        console.log('OAuth tokens received and stored')
+        db.data.tokens = tokens
+        await db.write()
 
-        // Redirect back to frontend
-        res.redirect('http://localhost:5173?oauth=success')
+        console.log('Tokens acquired and saved')
+        // Redirect with query param so frontend knows to refresh status
+        res.redirect('/?oauth=success')
     } catch (error) {
-        console.error('OAuth error:', error)
-        res.redirect('http://localhost:5173?oauth=error')
+        console.error('Error in auth callback:', error)
+        res.redirect('/?error=auth_failed')
     }
 })
 
-// Revoke OAuth
-app.post('/api/oauth/revoke', (req, res) => {
+app.post('/api/oauth/revoke', async (req, res) => {
     const { service } = req.body
-    if (service && tokens[service]) {
+    if (tokens[service]) {
         tokens[service] = null
-        res.json({ success: true, message: `${service} disconnected` })
-    } else {
-        res.status(400).json({ success: false, message: 'Invalid service' })
+        db.data.tokens = tokens
+        await db.write()
     }
+    res.json({ success: true })
 })
 
-// Get emails with attachments
-app.get('/api/emails', async (req, res) => {
-    if (!tokens.gmail) {
-        return res.status(401).json({ error: 'Gmail not connected' })
-    }
-
-    try {
-        oauth2Client.setCredentials(tokens.gmail)
-        const gmail = google.gmail({ version: 'v1', auth: oauth2Client })
-
-        const { dateFrom, dateTo } = req.query
-        let query = 'has:attachment filename:pdf'
-
-        if (dateFrom) query += ` after:${dateFrom}`
-        if (dateTo) query += ` before:${dateTo}`
-
-        const response = await gmail.users.messages.list({
-            userId: 'me',
-            q: query,
-            maxResults: 50
-        })
-
-        const messages = response.data.messages || []
-
-        // Get details for each message
-        const emailDetails = await Promise.all(
-            messages.slice(0, 20).map(async (msg) => {
-                const detail = await gmail.users.messages.get({
-                    userId: 'me',
-                    id: msg.id,
-                    format: 'metadata',
-                    metadataHeaders: ['From', 'Subject', 'Date']
-                })
-
-                const headers = detail.data.payload.headers
-                return {
-                    id: msg.id,
-                    from: headers.find(h => h.name === 'From')?.value || '',
-                    subject: headers.find(h => h.name === 'Subject')?.value || '',
-                    date: headers.find(h => h.name === 'Date')?.value || '',
-                    hasAttachment: true
-                }
-            })
-        )
-
-        res.json({ emails: emailDetails, total: messages.length })
-    } catch (error) {
-        console.error('Gmail API error:', error)
-        res.status(500).json({ error: 'Failed to fetch emails' })
-    }
-})
-
-// Scan trigger endpoint (placeholder for invoice processing)
-import { processInvoice } from './invoiceProcessor.js'
-import { uploadToDrive, appendToSheet } from './googleServices.js'
-
-// ... imports and setup
-
-// Scan Trigger Endpoint
+// Scan Endpoint
 app.post('/api/scan', async (req, res) => {
-    if (!tokens.gmail) return res.status(401).json({ error: 'Gmail not connected' })
-    if (!tokens.drive) return res.status(401).json({ error: 'Drive not connected' })
-    if (!tokens.sheets) return res.status(401).json({ error: 'Sheets not connected' })
-
     try {
-        oauth2Client.setCredentials(tokens.gmail)
-        const gmail = google.gmail({ version: 'v1', auth: oauth2Client })
+        if (!tokens.gmail) return res.status(401).json({ error: 'Gmail not connected' })
 
-        // 1. Search for emails with PDF attachments
-        const { dateFrom, dateTo } = req.body
-        let query = 'has:attachment filename:pdf -label:processed_invoice' // Exclude already processed
-        if (dateFrom) query += ` after:${dateFrom}`
-        if (dateTo) query += ` before:${dateTo}`
+        const gmailAuth = new google.auth.OAuth2()
+        gmailAuth.setCredentials(tokens.gmail)
+        const gmail = google.gmail({ version: 'v1', auth: gmailAuth })
+
+        const { dateFrom } = req.body
+        const query = dateFrom
+            ? `has:attachment filename:pdf after:${new Date(dateFrom).getTime() / 1000}`
+            : 'has:attachment filename:pdf newer_than:1d'
 
         console.log(`Scanning emails with query: ${query}`)
 
         const response = await gmail.users.messages.list({
             userId: 'me',
-            q: query,
-            maxResults: 10 // Process in batches
+            q: query
         })
 
         const messages = response.data.messages || []
-        console.log(`Found ${messages.length} emails to process`)
-
         const results = []
+        console.log(`Found ${messages.length} messages to scan...`)
 
-        // 2. Process each email
-        for (const msg of messages) {
+        const BATCH_SIZE = 3
+        for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+            const batch = messages.slice(i, i + BATCH_SIZE)
+            await Promise.all(batch.map(msg => processMessage(gmail, msg, results)))
+        }
+
+        async function processMessage(gmail, msg, results) {
             try {
-                // Get message details
-                const detail = await gmail.users.messages.get({ userId: 'me', id: msg.id })
-                const parts = detail.data.payload.parts || []
-
-                // Find PDF attachment
-                const pdfPart = parts.find(p => p.mimeType === 'application/pdf' || p.filename.toLowerCase().endsWith('.pdf'))
+                const message = await gmail.users.messages.get({ userId: 'me', id: msg.id })
+                const parts = message.data.payload.parts || []
+                const pdfPart = parts.find(p => p.mimeType === 'application/pdf' && p.filename)
 
                 if (pdfPart && pdfPart.body.attachmentId) {
-                    // Download attachment
                     const attachment = await gmail.users.messages.attachments.get({
                         userId: 'me',
                         messageId: msg.id,
@@ -200,49 +141,31 @@ app.post('/api/scan', async (req, res) => {
 
                     const filename = pdfPart.filename
                     const pdfBuffer = Buffer.from(attachment.data.data, 'base64')
-
                     console.log(`Processing attachment: ${filename}`)
 
-                    // 3. Classify and Extract with OpenAI
                     const processingResult = await processInvoice(pdfBuffer, filename)
 
                     if (processingResult.success) {
                         const invoiceData = processingResult.data
-                        console.log(`Invoice identified: ${invoiceData.invoice_number} from ${invoiceData.supplier}`)
 
-                        // 4. Upload to Drive
-                        // Temporarily use tokens.drive since we're using same account
+                        // Upload Drive
                         const driveAuth = new google.auth.OAuth2()
                         driveAuth.setCredentials(tokens.drive)
+                        const driveResult = await uploadToDrive(driveAuth, pdfBuffer, filename, invoiceData.company || 'Unknown', invoiceData.issue_date)
 
-                        const driveResult = await uploadToDrive(
-                            driveAuth,
-                            pdfBuffer,
-                            filename,
-                            invoiceData.company || 'Unknown Company',
-                            invoiceData.issue_date
-                        )
-
-                        // 5. Append to Sheets
+                        // Sheets
                         const sheetsAuth = new google.auth.OAuth2()
                         sheetsAuth.setCredentials(tokens.sheets)
-
                         await appendToSheet(sheetsAuth, invoiceData, driveResult.webViewLink)
-
-                        // 6. Label email as processed
-                        // First check if label exists, if not create it (omitted for brevity, assuming label exists or handled)
-                        // await gmail.users.messages.modify({ ... })
 
                         results.push({
                             status: 'success',
                             id: invoiceData.invoice_number,
                             supplier: invoiceData.supplier,
                             amount: invoiceData.amount_incl_vat,
-                            date: invoiceData.issue_date,
-                            fileLink: driveResult.webViewLink
+                            date: invoiceData.issue_date
                         })
                     } else {
-                        console.log(`Document ${filename} classified as non-invoice or other.`)
                         results.push({ status: 'skipped', reason: 'Not an invoice', filename })
                     }
                 }
@@ -265,24 +188,16 @@ app.post('/api/scan', async (req, res) => {
     }
 })
 
-// ... API routes above
-
-// Serve static files in production
-import path from 'path'
-import { fileURLToPath } from 'url'
-
+// Serve static in production
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const distPath = path.join(__dirname, '../dist')
-
 app.use(express.static(distPath))
 
-// Handle SPA routing - return index.html for all non-API routes
-// Handle SPA routing - return index.html for all non-API routes
+// SPA Fallback
 app.get(/(.*)/, (req, res) => {
     res.sendFile(path.join(distPath, 'index.html'))
 })
 
-// Start server
 app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`)
 })
