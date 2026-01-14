@@ -58,6 +58,16 @@ async function saveToken(service, token) {
     if (error) console.error(`Error saving ${service} token:`, error)
 }
 
+// Helper: Delete Token
+async function deleteToken(service) {
+    const { error } = await supabase
+        .from('system_tokens')
+        .delete()
+        .eq('service_name', service)
+
+    if (error) console.error(`Error deleting ${service} token:`, error)
+}
+
 // Routes
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }))
 
@@ -106,7 +116,7 @@ app.get('/auth/google/callback', async (req, res) => {
 
 app.post('/api/oauth/revoke', async (req, res) => {
     const { service } = req.body
-    await saveToken(service, null)
+    await deleteToken(service)
     res.json({ success: true })
 })
 
