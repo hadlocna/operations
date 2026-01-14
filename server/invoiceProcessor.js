@@ -29,7 +29,7 @@ const COMPANIES = {
     ]
 }
 
-import pdf2img from 'pdf-img-convert'
+import { convert } from 'pdf-img-convert'
 
 // ...
 
@@ -37,7 +37,7 @@ export async function processInvoice(fileBuffer, originalFilename) {
     try {
         // 1. Convert PDF to Images (PNG)
         // Returns an array of Uint8Array or Buffer
-        const pngPages = await pdf2img.convert(fileBuffer, {
+        const pngPages = await convert(fileBuffer, {
             width: 1536, // High resolution for readability
             height: 2048,
             page_numbers: [1, 2] // Limit to first 2 pages to save tokens/time
