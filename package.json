@@ -14,11 +14,13 @@
     "vite": "^7.2.4"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.90.1",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "googleapis": "^170.0.0",
     "lowdb": "^7.0.1",
-    "openai": "^4.104.0"
+    "openai": "^4.104.0",
+    "pg": "^8.16.3"
   }
 }

@@ -2,7 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import { config } from 'dotenv'
 import { google } from 'googleapis'
-import { JSONFilePreset } from 'lowdb/node'
+import { createClient } from '@supabase/supabase-js'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { processInvoice } from './invoiceProcessor.js'
@@ -25,21 +25,44 @@ const SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets'
 ]
 
-// Initialize Lowdb
-const defaultData = {
-    tokens: {
-        gmail: null,
-        drive: null,
-        sheets: null
-    }
-}
-const db = await JSONFilePreset('db.json', defaultData)
-let tokens = db.data.tokens
+// Initialize Supabase
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_KEY
+)
 
-// Status Endpoint
+// Helper: Get Tokens
+async function getTokens() {
+    const { data, error } = await supabase
+        .from('system_tokens')
+        .select('*')
+
+    const tokens = { gmail: null, drive: null, sheets: null }
+    if (data) {
+        data.forEach(row => {
+            if (tokens.hasOwnProperty(row.service_name)) {
+                tokens[row.service_name] = row.token_json
+            }
+        })
+    }
+    return tokens
+}
+
+// Helper: Save Token
+async function saveToken(service, token) {
+    // Upsert token
+    const { error } = await supabase
+        .from('system_tokens')
+        .upsert({ service_name: service, token_json: token }, { onConflict: 'service_name' })
+
+    if (error) console.error(`Error saving ${service} token:`, error)
+}
+
+// Routes
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }))
 
-app.get('/api/status', (req, res) => {
+app.get('/api/status', async (req, res) => {
+    const tokens = await getTokens()
     res.json({
         gmail: !!tokens.gmail,
         drive: !!tokens.drive,
@@ -56,9 +79,9 @@ const oauth2Client = new google.auth.OAuth2(
 // Auth Routes
 app.get('/auth/google', (req, res) => {
     const authUrl = oauth2Client.generateAuthUrl({
-        access_type: 'offline',
+        access_type: 'offline', // Crucial for refresh tokens
         scope: SCOPES,
-        prompt: 'consent'
+        prompt: 'consent' // Force refresh token generation
     })
     res.redirect(authUrl)
 })
@@ -69,15 +92,11 @@ app.get('/auth/google/callback', async (req, res) => {
         const { tokens: newTokens } = await oauth2Client.getToken(code)
 
         // Save tokens for all services
-        tokens.gmail = newTokens
-        tokens.drive = newTokens
-        tokens.sheets = newTokens
-
-        db.data.tokens = tokens
-        await db.write()
+        await saveToken('gmail', newTokens)
+        await saveToken('drive', newTokens)
+        await saveToken('sheets', newTokens)
 
         console.log('Tokens acquired and saved')
-        // Redirect with query param so frontend knows to refresh status
         res.redirect('/?oauth=success')
     } catch (error) {
         console.error('Error in auth callback:', error)
@@ -87,17 +106,14 @@ app.get('/auth/google/callback', async (req, res) => {
 
 app.post('/api/oauth/revoke', async (req, res) => {
     const { service } = req.body
-    if (tokens[service]) {
-        tokens[service] = null
-        db.data.tokens = tokens
-        await db.write()
-    }
+    await saveToken(service, null)
     res.json({ success: true })
 })
 
 // Scan Endpoint
 app.post('/api/scan', async (req, res) => {
     try {
+        const tokens = await getTokens()
         if (!tokens.gmail) return res.status(401).json({ error: 'Gmail not connected' })
 
         const gmailAuth = new google.auth.OAuth2()
@@ -123,10 +139,10 @@ app.post('/api/scan', async (req, res) => {
         const BATCH_SIZE = 3
         for (let i = 0; i < messages.length; i += BATCH_SIZE) {
             const batch = messages.slice(i, i + BATCH_SIZE)
-            await Promise.all(batch.map(msg => processMessage(gmail, msg, results)))
+            await Promise.all(batch.map(msg => processMessage(gmail, msg, results, tokens)))
         }
 
-        async function processMessage(gmail, msg, results) {
+        async function processMessage(gmail, msg, results, tokens) {
             try {
                 const message = await gmail.users.messages.get({ userId: 'me', id: msg.id })
                 const parts = message.data.payload.parts || []
@@ -163,7 +179,8 @@ app.post('/api/scan', async (req, res) => {
                             id: invoiceData.invoice_number,
                             supplier: invoiceData.supplier,
                             amount: invoiceData.amount_incl_vat,
-                            date: invoiceData.issue_date
+                            date: invoiceData.issue_date,
+                            fileLink: driveResult.webViewLink
                         })
                     } else {
                         results.push({ status: 'skipped', reason: 'Not an invoice', filename })
