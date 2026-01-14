@@ -1,5 +1,4 @@
 import './style.css'
-console.log('App Updated: Single Auth Mode')
 
 // ==================== STATE ====================
 const state = {
@@ -9,7 +8,7 @@ const state = {
   },
   scanEnabled: true,
   scanFrequency: '2',
-  logs: []
+  logs: JSON.parse(localStorage.getItem('ops_logs') || '[]') // Init from storage
 }
 
 const APP_PASSWORD = 'leanne'
@@ -55,8 +54,9 @@ function renderDashboard() {
   const isConnected = state.oauth.connected
 
   // Calculate dynamic stats
-  const completed = state.logs.filter(l => l.status === 'success').length
-  const pending = state.logs.filter(l => l.status === 'processing').length
+  const completed = state.logs.filter(l => l.status === 'Complete' || l.status === 'success').length
+  // Note: older logs might have different status strings, handle gracefuly
+  const pending = 0 // We process synchronously now
 
   app.innerHTML = `
     <!-- Main Dashboard -->
@@ -210,6 +210,7 @@ function renderDashboard() {
               <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
                 <h3 class="font-bold text-lg text-slate-800">Processing Activity</h3>
                 <div class="flex gap-2">
+                  <button id="clearLogsBtn" class="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500" title="Clear Logs"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
                   <button class="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500"><i data-lucide="filter" class="w-4 h-4"></i></button>
                   <button class="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500"><i data-lucide="download" class="w-4 h-4"></i></button>
                 </div>
@@ -235,7 +236,7 @@ function renderDashboard() {
                 <div class="inline-flex items-center justify-center w-12 h-12 bg-slate-100 text-slate-400 rounded-full mb-4">
                   <i data-lucide="inbox" class="w-6 h-6"></i>
                 </div>
-                <p class="text-slate-500 font-medium">No activity for the selected range.</p>
+                <p class="text-slate-500 font-medium">No activity recorded.</p>
               </div>
               ` : ''}
             </div>
@@ -259,7 +260,7 @@ function renderDashboard() {
 
 function renderLogRows() {
   return state.logs.map(log => {
-    const statusColor = log.status === 'Complete' ? 'text-green-600 bg-green-50' :
+    const statusColor = (log.status === 'Complete' || log.status === 'success') ? 'text-green-600 bg-green-50' :
       log.status === 'Processing' ? 'text-blue-600 bg-blue-50' : 'text-red-600 bg-red-50'
     return `
       <tr class="hover:bg-slate-50 transition-colors group">
@@ -284,7 +285,7 @@ function renderLogRows() {
           </span>
         </td>
         <td class="px-6 py-4">
-          <button class="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all" title="View Details">
+          <button class="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all" title="View Details" onclick="window.open('${log.fileLink}', '_blank')">
             <i data-lucide="external-link" class="w-4 h-4"></i>
           </button>
         </td>
@@ -320,6 +321,18 @@ function attachDashboardListeners() {
     localStorage.removeItem('isLoggedIn')
     renderLogin()
   })
+
+  // Clear Logs
+  const clearBtn = document.getElementById('clearLogsBtn')
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      if (confirm('Clear all logs?')) {
+        state.logs = []
+        localStorage.removeItem('ops_logs')
+        renderDashboard()
+      }
+    })
+  }
 
   // OAuth buttons logic
   document.querySelectorAll('.oauth-btn').forEach(btn => {
@@ -412,13 +425,27 @@ async function triggerRealScan() {
       }
 
       if (result.skipped.length > 0 || result.errors.length > 0) {
-        alert(msg) // Use alert for detailed report
+        alert(msg)
       } else {
         showToast(msg)
       }
 
-      // Refresh log but wait a bit
-      setTimeout(() => window.location.reload(), 2000)
+      // Update State Logs (Prepend new items)
+      if (result.processed.length > 0) {
+        const newLogs = result.processed.map(item => ({
+          id: item.id || 'N/A',
+          supplier: item.supplier || 'Unknown',
+          date: item.date || 'N/A',
+          amount: typeof item.amount === 'number' ? item.amount.toFixed(2) : item.amount,
+          status: 'Complete',
+          fileLink: item.fileLink
+        }))
+
+        state.logs = [...newLogs, ...state.logs]
+        localStorage.setItem('ops_logs', JSON.stringify(state.logs))
+        renderDashboard()
+      }
+
     } else {
       showToast('Scan failed: ' + (result.error || 'Unknown error'))
     }
