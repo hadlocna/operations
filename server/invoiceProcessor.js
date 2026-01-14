@@ -77,29 +77,27 @@ export async function processInvoice(fileBuffer, originalFilename) {
             text: {
                 format: {
                     type: "json_schema",
+                    name: "invoice_extraction",
                     strict: true,
                     schema: {
-                        name: "invoice_extraction",
-                        schema: {
-                            type: "object",
-                            required: ["is_invoice_document"],
-                            properties: {
-                                is_invoice_document: { type: "boolean" },
-                                reason: { type: ["string", "null"] },
-                                invoice_number: { type: ["string", "null"] },
-                                issue_date: { type: ["string", "null"] },
-                                total_amount: { type: ["number", "null"] },
-                                amount_excl_vat: { type: ["number", "null"] },
-                                vat_amount: { type: ["number", "null"] },
-                                currency: { type: ["string", "null"] },
-                                supplier_name: { type: ["string", "null"] },
-                                customer_name: { type: ["string", "null"] },
-                                line_items_present: { type: ["boolean", "null"] },
-                                description: { type: ["string", "null"] },
-                                notes: { type: ["string", "null"] }
-                            },
-                            additionalProperties: false
-                        }
+                        type: "object",
+                        required: ["is_invoice_document"],
+                        properties: {
+                            is_invoice_document: { type: "boolean" },
+                            reason: { type: ["string", "null"] },
+                            invoice_number: { type: ["string", "null"] },
+                            issue_date: { type: ["string", "null"] },
+                            total_amount: { type: ["number", "null"] },
+                            amount_excl_vat: { type: ["number", "null"] },
+                            vat_amount: { type: ["number", "null"] },
+                            currency: { type: ["string", "null"] },
+                            supplier_name: { type: ["string", "null"] },
+                            customer_name: { type: ["string", "null"] },
+                            line_items_present: { type: ["boolean", "null"] },
+                            description: { type: ["string", "null"] },
+                            notes: { type: ["string", "null"] }
+                        },
+                        additionalProperties: false
                     }
                 }
             }
