@@ -39,13 +39,11 @@ async function getTokens() {
         .eq('service_name', 'google')
         .single()
 
-    // Return unified object for compatibility or just the raw token
     return data ? { google: data.token_json } : { google: null }
 }
 
 // Helper: Save Token
 async function saveToken(service, token) {
-    // Upsert token
     const { error } = await supabase
         .from('system_tokens')
         .upsert({ service_name: service, token_json: token }, { onConflict: 'service_name' })
@@ -110,27 +108,40 @@ app.post('/api/oauth/revoke', async (req, res) => {
     res.json({ success: true })
 })
 
-// Scan Endpoint
-app.post('/api/scan', async (req, res) => {
+// === SSE STREAMING SCAN ENDPOINT ===
+app.get('/api/scan/stream', async (req, res) => {
+    // SSE Headers
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+
+    const sendEvent = (data) => {
+        res.write(`data: ${JSON.stringify(data)}\n\n`)
+    }
+
     try {
-        // Fetch the single master token
+        const { dateFrom } = req.query
+
+        sendEvent({ type: 'log', message: 'Initializing Scan Process...' })
+
+        // Fetch Tokens
         const tokenContainer = await getTokens()
         const googleToken = tokenContainer.google
 
-        if (!googleToken) return res.status(401).json({ error: 'Google Account not connected' })
+        if (!googleToken) {
+            sendEvent({ type: 'error', message: 'Google Account not connected.' })
+            return res.end()
+        }
 
-        // Re-use same credentials for all clients
         const auth = new google.auth.OAuth2()
         auth.setCredentials(googleToken)
-
         const gmail = google.gmail({ version: 'v1', auth })
 
-        const { dateFrom } = req.body
         const query = dateFrom
             ? `has:attachment filename:pdf after:${new Date(dateFrom).getTime() / 1000}`
             : 'has:attachment filename:pdf newer_than:1d'
 
-        console.log(`[SCAN_INIT] Starting scan with query: "${query}"`)
+        sendEvent({ type: 'log', message: `Querying Gmail: "${query}"` })
 
         const response = await gmail.users.messages.list({
             userId: 'me',
@@ -138,110 +149,124 @@ app.post('/api/scan', async (req, res) => {
         })
 
         const messages = response.data.messages || []
-        const results = []
-        console.log(`[SCAN_FOUND] Found ${messages.length} potential email matches.`)
+        sendEvent({ type: 'log', message: `Found ${messages.length} potential emails.` })
+
+        const results = [] // Store summary for final reporting
 
         if (messages.length === 0) {
-            console.log('[SCAN_INFO] No messages found matching query.')
+            sendEvent({ type: 'log', message: 'No messages found.' })
         }
 
-        const BATCH_SIZE = 3
-        for (let i = 0; i < messages.length; i += BATCH_SIZE) {
-            const batch = messages.slice(i, i + BATCH_SIZE)
-            await Promise.all(batch.map(msg => processMessage(gmail, msg, results, googleToken)))
+        const BATCH_SIZE = 1 // Process 1 by 1 for better streaming feel? Or keep batch but log carefully.
+        // Let's do serial or small batch execution to ensure logs stream nicely
+        for (const msg of messages) {
+            await processMessage(gmail, msg, results, googleToken, sendEvent)
         }
 
-        async function processMessage(gmail, msg, results, googleToken) {
-            try {
-                const message = await gmail.users.messages.get({ userId: 'me', id: msg.id })
-                const parts = message.data.payload.parts || []
+        // Final Summary
+        const processed = results.filter(r => r.status === 'success')
+        const skipped = results.filter(r => r.status === 'skipped')
+        const errors = results.filter(r => r.status === 'error')
 
-                // Detailed debug for attachments
-                console.log(`[MSG_DEBUG] ID: ${msg.id}, Parts: ${parts.length}`)
-
-                // Recursive function to find PDF in multipart structure
-                function findPdfPart(parts) {
-                    for (const p of parts) {
-                        if (p.mimeType === 'application/pdf' && p.filename) return p
-                        if (p.parts) { // check nested parts
-                            const nested = findPdfPart(p.parts)
-                            if (nested) return nested
-                        }
-                    }
-                    return null
-                }
-
-                const pdfPart = findPdfPart(parts)
-
-                if (pdfPart && pdfPart.body.attachmentId) {
-                    const attachment = await gmail.users.messages.attachments.get({
-                        userId: 'me',
-                        messageId: msg.id,
-                        id: pdfPart.body.attachmentId
-                    })
-
-                    const filename = pdfPart.filename
-                    const pdfBuffer = Buffer.from(attachment.data.data, 'base64')
-                    console.log(`[PROC_START] Processing attachment: ${filename}`)
-
-                    const processingResult = await processInvoice(pdfBuffer, filename)
-
-                    if (processingResult.success) {
-                        const invoiceData = processingResult.data
-                        console.log(`[PROC_SUCCESS] Identified Invoice: ${invoiceData.invoice_number} from ${invoiceData.supplier_name}`)
-
-                        // Upload Drive (Reuse auth)
-                        const driveAuth = new google.auth.OAuth2()
-                        driveAuth.setCredentials(googleToken)
-
-                        const driveResult = await uploadToDrive(
-                            driveAuth,
-                            pdfBuffer,
-                            filename,
-                            invoiceData.routing,
-                            invoiceData.issue_date
-                        )
-
-                        // Sheets (Reuse auth)
-                        const sheetsAuth = new google.auth.OAuth2()
-                        sheetsAuth.setCredentials(googleToken)
-
-                        await appendToSheet(sheetsAuth, invoiceData, driveResult.webViewLink)
-
-                        results.push({
-                            status: 'success',
-                            id: invoiceData.invoice_number,
-                            supplier: invoiceData.supplier_name,
-                            amount: invoiceData.total_amount,
-                            date: invoiceData.issue_date,
-                            fileLink: driveResult.webViewLink
-                        })
-                    } else {
-                        console.log(`[PROC_SKIP] Document skipped. Reason: ${processingResult.reason}`)
-                        results.push({ status: 'skipped', reason: processingResult.reason, filename })
-                    }
-                } else {
-                    console.log(`[MSG_SKIP] No PDF attachment found in message ${msg.id}`)
-                }
-            } catch (err) {
-                console.error(`[PROC_ERROR] Error processing message ${msg.id}:`, err)
-                results.push({ status: 'error', messageId: msg.id, error: err.message })
-            }
-        }
-
-        res.json({
-            success: true,
-            processed: results.filter(r => r.status === 'success'),
-            skipped: results.filter(r => r.status === 'skipped'),
-            errors: results.filter(r => r.status === 'error'),
-            debug: { query, totalFound: messages.length }
+        sendEvent({
+            type: 'complete',
+            summary: { processed, skipped, errors }
         })
+        res.end()
 
     } catch (error) {
-        console.error('[SCAN_CRITICAL] Scan execution failed:', error)
-        res.status(500).json({ error: 'Scan failed' })
+        console.error('Scan Error:', error)
+        sendEvent({ type: 'error', message: `Critical Scan Fail: ${error.message}` })
+        res.end()
     }
 })
+
+
+async function processMessage(gmail, msg, results, googleToken, sendEvent) {
+    try {
+        // Log "Processing Message ID..."
+        // sendEvent({ type: 'log', message: `checking msg ${msg.id.substring(0,5)}...` })
+
+        const message = await gmail.users.messages.get({ userId: 'me', id: msg.id })
+        const parts = message.data.payload.parts || []
+
+        // Recursive function to find PDF in multipart structure
+        function findPdfPart(parts) {
+            for (const p of parts) {
+                if (p.mimeType === 'application/pdf' && p.filename) return p
+                if (p.parts) { // check nested parts
+                    const nested = findPdfPart(p.parts)
+                    if (nested) return nested
+                }
+            }
+            return null
+        }
+
+        const pdfPart = findPdfPart(parts)
+
+        if (pdfPart && pdfPart.body.attachmentId) {
+            const filename = pdfPart.filename
+            sendEvent({ type: 'log', message: `📄 Found PDF: "${filename}" - Downloading...` })
+
+            const attachment = await gmail.users.messages.attachments.get({
+                userId: 'me',
+                messageId: msg.id,
+                id: pdfPart.body.attachmentId
+            })
+
+            const pdfBuffer = Buffer.from(attachment.data.data, 'base64')
+            sendEvent({ type: 'log', message: `🤖 Analyzing "${filename}" with GPT-4o...` })
+
+            const processingResult = await processInvoice(pdfBuffer, filename)
+
+            if (processingResult.success) {
+                const invoiceData = processingResult.data
+                sendEvent({ type: 'log', message: `✅ Valid Invoice Identified: #${invoiceData.invoice_number}` })
+                sendEvent({ type: 'log', message: `   Supplier: ${invoiceData.supplier_name} | Amount: ${invoiceData.total_amount}` })
+
+                // Upload Drive (Reuse auth)
+                const driveAuth = new google.auth.OAuth2()
+                driveAuth.setCredentials(googleToken)
+
+                sendEvent({ type: 'log', message: `   Uploading to Drive...` })
+                const driveResult = await uploadToDrive(
+                    driveAuth,
+                    pdfBuffer,
+                    filename,
+                    invoiceData.routing,
+                    invoiceData.issue_date
+                )
+
+                // Sheets (Reuse auth)
+                const sheetsAuth = new google.auth.OAuth2()
+                sheetsAuth.setCredentials(googleToken)
+
+                sendEvent({ type: 'log', message: `   Appending to Sheets...` })
+                await appendToSheet(sheetsAuth, invoiceData, driveResult.webViewLink)
+
+                results.push({
+                    status: 'success',
+                    id: invoiceData.invoice_number,
+                    supplier: invoiceData.supplier_name,
+                    amount: invoiceData.total_amount,
+                    date: invoiceData.issue_date,
+                    fileLink: driveResult.webViewLink
+                })
+            } else {
+                const reason = processingResult.reason || "Unknown Reason"
+                sendEvent({ type: 'log', message: `⚠️ Skipped "${filename}": ${reason}` })
+                results.push({ status: 'skipped', reason: reason, filename })
+            }
+        } else {
+            // sendEvent({ type: 'log', message: `(Skipping msg ${msg.id}: No PDF attachment)` })
+        }
+    } catch (err) {
+        console.error(`Processing error:`, err)
+        sendEvent({ type: 'error', message: `Error processing ${msg.id}: ${err.message}` })
+        results.push({ status: 'error', messageId: msg.id, error: err.message })
+    }
+}
+
 
 // Serve static in production
 const __dirname = path.dirname(fileURLToPath(import.meta.url))

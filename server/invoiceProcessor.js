@@ -95,7 +95,7 @@ export async function processInvoice(fileBuffer, originalFilename) {
 
     } catch (error) {
         console.error("AI Processing Error:", error)
-        return { success: false, error: error.message }
+        return { success: false, reason: `AI Processing Error: ${error.message}` }
     }
 }
 

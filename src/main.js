@@ -55,8 +55,7 @@ function renderDashboard() {
 
   // Calculate dynamic stats
   const completed = state.logs.filter(l => l.status === 'Complete' || l.status === 'success').length
-  // Note: older logs might have different status strings, handle gracefuly
-  const pending = 0 // We process synchronously now
+  const pending = 0 // Synchronous
 
   app.innerHTML = `
     <!-- Main Dashboard -->
@@ -77,10 +76,6 @@ function renderDashboard() {
                 <span class="text-slate-500 uppercase tracking-wider">Services</span>
               </div>
             </div>
-            <button class="p-2 text-slate-400 hover:bg-slate-50 hover:text-slate-600 rounded-full transition-colors relative">
-              <i data-lucide="bell" class="w-5 h-5"></i>
-              ${state.logs.length > 0 ? '<span class="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>' : ''}
-            </button>
             <button id="logout-btn" class="w-9 h-9 bg-gradient-to-br from-blue-50 to-blue-100 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs border border-blue-200 hover:shadow-md transition-all cursor-pointer">
               LN
             </button>
@@ -103,6 +98,27 @@ function renderDashboard() {
           <button id="configBtn" class="ml-auto text-xs font-bold text-amber-800 bg-amber-100 px-3 py-1.5 rounded-lg hover:bg-amber-200 transition-colors uppercase tracking-tight">Connect Now</button>
         </div>` : ''}
 
+        <!-- LIVE LOGS TERMINAL -->
+        <div id="liveLogsContainer" class="mb-8 hidden">
+           <div class="bg-slate-900 rounded-xl border border-slate-800 shadow-xl overflow-hidden">
+             <div class="px-4 py-2 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                    <div class="w-3 h-3 rounded-full bg-amber-500"></div>
+                    <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                    <span class="text-xs font-mono text-slate-400 ml-2">scanner_output.log</span>
+                </div>
+                <div id="scanSpinner" class="hidden">
+                    <i data-lucide="loader-2" class="w-4 h-4 text-blue-500 animate-spin"></i>
+                </div>
+             </div>
+             <div id="liveLogs" class="p-4 h-64 overflow-y-auto font-mono text-xs text-green-400 space-y-1">
+                <!-- Logs will appear here -->
+             </div>
+           </div>
+        </div>
+
+
         <!-- Dashboard Stats Grid -->
         <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:border-blue-100 transition-colors">
@@ -116,136 +132,81 @@ function renderDashboard() {
           </div>
           
           <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:border-blue-100 transition-colors">
-            <div class="text-slate-500 text-xs font-bold mb-2 uppercase tracking-wider">Avg Confidence</div>
-            <div class="flex items-end justify-between">
-              <span class="text-4xl font-bold text-slate-900 tracking-tight">--<span class="text-lg text-slate-400">%</span></span>
-              <div class="h-8 w-8 bg-blue-50 rounded-lg flex items-center justify-center text-blue-600">
-                <i data-lucide="brain-circuit" class="w-4 h-4"></i>
-              </div>
-            </div>
-          </div>
-          
-          <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:border-blue-100 transition-colors">
             <div class="text-slate-500 text-xs font-bold mb-2 uppercase tracking-wider">Queue Status</div>
             <div class="flex items-end justify-between">
               <span class="text-4xl font-bold text-slate-900 tracking-tight">${pending}</span>
               <span class="text-slate-400 text-xs font-bold mb-1 uppercase bg-slate-50 px-2 py-1 rounded">Idle</span>
             </div>
           </div>
-          
-          <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:border-blue-100 transition-colors">
-            <div class="text-slate-500 text-xs font-bold mb-2 uppercase tracking-wider">System Status</div>
-            <div class="flex items-center justify-between mt-1">
-              <div class="flex items-center gap-3">
-                 <div class="w-3 h-3 bg-green-500 rounded-full shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse"></div>
-                 <span class="font-bold text-slate-700 text-sm">Online</span>
-              </div>
-              <label class="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" id="scanToggle" class="sr-only peer" ${state.scanEnabled ? 'checked' : ''}>
-                <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-              </label>
-            </div>
-          </div>
-        </div>
 
-        <!-- Controls and Filter -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          <!-- Left Column: Controls -->
-          <div class="lg:col-span-1 space-y-6">
-            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-                <i data-lucide="settings" class="w-5 h-5 text-slate-400"></i>
-                Scanner Controls
-              </h3>
-              <div class="space-y-4">
-                <div>
-                  <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Frequency</label>
-                  <select id="scan-frequency" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
-                    <option value="48" ${state.scanFrequency === '48' ? 'selected' : ''}>Every 30 Minutes</option>
-                    <option value="24" ${state.scanFrequency === '24' ? 'selected' : ''}>Hourly</option>
-                    <option value="2" ${state.scanFrequency === '2' ? 'selected' : ''}>2x Daily</option>
-                    <option value="1" ${state.scanFrequency === '1' ? 'selected' : ''}>Daily</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Historical Scan (Date Range)</label>
-                  <div class="grid grid-cols-2 gap-2">
+          <!-- Controls -->
+          <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+             <h3 class="font-bold text-xs text-slate-500 uppercase mb-4">Scanner Controls</h3>
+             <div class="flex flex-col gap-4">
+               <div class="grid grid-cols-2 gap-2">
                     <input type="date" id="date-from" class="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs">
                     <input type="date" id="date-to" class="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs">
-                  </div>
-                </div>
-                <button id="triggerBtn" class="w-full bg-slate-900 hover:bg-black text-white py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 mt-4">
+               </div>
+               <button id="triggerBtn" class="w-full bg-slate-900 hover:bg-black text-white py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2">
                   <i data-lucide="play" class="w-4 h-4"></i>
-                  Trigger Manual Scan
-                </button>
-              </div>
-            </div>
+                  Start Live Scan
+               </button>
+             </div>
+          </div>
 
-            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-              <h3 class="font-bold text-lg mb-4 flex items-center gap-2 text-slate-800">
-                <i data-lucide="link" class="w-5 h-5 text-slate-400"></i>
-                Service Connection
-              </h3>
-              <div class="space-y-3">
+           <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+              <h3 class="font-bold text-xs text-slate-500 uppercase mb-4">Connection</h3>
                 <div class="flex items-center justify-between p-3 ${isConnected ? 'bg-green-50 border-green-100' : 'bg-slate-50 border-slate-200'} rounded-xl border">
                   <div class="flex items-center gap-3">
                     <div class="p-2 bg-white rounded-lg border border-slate-200 shadow-sm">
                       <img src="https://www.gstatic.com/images/branding/product/1x/googleg_48dp.png" class="w-5 h-5" alt="Google">
                     </div>
                     <div>
-                        <span class="block text-sm font-bold ${isConnected ? 'text-green-800' : 'text-slate-700'}">${isConnected ? 'Google Connected' : 'Google Account'}</span>
-                        <span class="text-[10px] text-slate-500 font-medium tracking-tight">Gmail • Drive • Sheets</span>
+                        <span class="block text-sm font-bold ${isConnected ? 'text-green-800' : 'text-slate-700'}">${isConnected ? 'Connected' : 'Disconnected'}</span>
                     </div>
                   </div>
                   <button class="oauth-btn text-xs font-bold ${isConnected ? 'text-green-700 hover:underline' : 'text-blue-600 px-3 py-1.5 bg-blue-50 rounded-lg border border-blue-100 hover:bg-blue-100'}" data-service="google">${isConnected ? 'REVOKE' : 'CONNECT'}</button>
                 </div>
-              </div>
-            </div>
           </div>
+        </div>
 
-          <!-- Right Column: Activity Log -->
-          <div class="lg:col-span-2">
-            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-                <h3 class="font-bold text-lg text-slate-800">Processing Activity</h3>
-                <div class="flex gap-2">
-                  <button id="clearLogsBtn" class="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500" title="Clear Logs"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
-                  <button class="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500"><i data-lucide="filter" class="w-4 h-4"></i></button>
-                  <button class="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500"><i data-lucide="download" class="w-4 h-4"></i></button>
-                </div>
-              </div>
-              <div class="overflow-x-auto">
-                <table class="w-full text-left">
-                  <thead class="bg-slate-50 border-b border-slate-100">
-                    <tr>
-                      <th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Invoice / Supplier</th>
-                      <th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Date</th>
-                      <th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Amount</th>
-                      <th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
-                      <th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody id="activityLogBody" class="divide-y divide-slate-100">
-                    ${renderLogRows()}
-                  </tbody>
-                </table>
-              </div>
-              ${state.logs.length === 0 ? `
-              <div id="emptyState" class="p-12 text-center">
-                <div class="inline-flex items-center justify-center w-12 h-12 bg-slate-100 text-slate-400 rounded-full mb-4">
-                  <i data-lucide="inbox" class="w-6 h-6"></i>
-                </div>
-                <p class="text-slate-500 font-medium">No activity recorded.</p>
-              </div>
-              ` : ''}
+        <!-- Activity Log -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+            <h3 class="font-bold text-lg text-slate-800">Processing History</h3>
+            <div class="flex gap-2">
+                <button id="clearLogsBtn" class="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500" title="Clear Logs"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
             </div>
-          </div>
+            </div>
+            <div class="overflow-x-auto">
+            <table class="w-full text-left">
+                <thead class="bg-slate-50 border-b border-slate-100">
+                <tr>
+                    <th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Invoice / Supplier</th>
+                    <th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Date</th>
+                    <th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Amount</th>
+                    <th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
+                    <th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">File</th>
+                </tr>
+                </thead>
+                <tbody id="activityLogBody" class="divide-y divide-slate-100">
+                ${renderLogRows()}
+                </tbody>
+            </table>
+            </div>
+            ${state.logs.length === 0 ? `
+            <div id="emptyState" class="p-12 text-center">
+            <div class="inline-flex items-center justify-center w-12 h-12 bg-slate-100 text-slate-400 rounded-full mb-4">
+                <i data-lucide="inbox" class="w-6 h-6"></i>
+            </div>
+            <p class="text-slate-500 font-medium">No activity recorded.</p>
+            </div>
+            ` : ''}
         </div>
       </main>
     </div>
 
-    <!-- Notification Toast -->
+    <!-- Notification Toast (Still kept for simple feedback) -->
     <div id="toast" class="fixed bottom-6 right-6 transform translate-y-24 transition-transform duration-300 z-[100]">
       <div class="bg-slate-900 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3">
         <i data-lucide="check-circle" class="w-5 h-5 text-green-400"></i>
@@ -268,7 +229,6 @@ function renderLogRows() {
           <div class="flex flex-col">
             <span class="font-bold text-slate-800 text-sm flex items-center gap-1">
               ${log.id}
-              ${log.qrDetected ? '<i data-lucide="qr-code" class="w-3 h-3 text-blue-500" title="QR Code Verified"></i>' : ''}
             </span>
             <span class="text-xs text-slate-500">${log.supplier}</span>
           </div>
@@ -294,7 +254,7 @@ function renderLogRows() {
   }).join('')
 }
 
-// ==================== EVENT HANDLERS ====================
+// ==================== EVENT HANDLERS & SSE ====================
 function handleLogin(e) {
   e.preventDefault()
   const password = document.getElementById('passwordInput').value
@@ -359,106 +319,101 @@ function attachDashboardListeners() {
     })
   }
 
-  // Scan toggle
-  document.getElementById('scanToggle').addEventListener('change', () => {
-    state.scanEnabled = !state.scanEnabled
-    showToast(state.scanEnabled ? 'Scanning resumed' : 'Scanning paused')
-    renderDashboard()
-  })
-
-  // Frequency selector
-  const freqSelect = document.getElementById('scan-frequency')
-  if (freqSelect) {
-    freqSelect.addEventListener('change', (e) => {
-      state.scanFrequency = e.target.value
-      showToast('Frequency updated')
-    })
-  }
-
-  // Manual scan
+  // Manual scan (SSE Trigger)
   const triggerBtn = document.getElementById('triggerBtn')
   if (triggerBtn) {
-    triggerBtn.addEventListener('click', triggerRealScan)
+    triggerBtn.addEventListener('click', startStreamingScan)
   }
 }
 
-async function triggerRealScan() {
+// === SSE LOGIC ===
+function startStreamingScan() {
   const btn = document.getElementById('triggerBtn')
+  const dateFrom = document.getElementById('date-from').value
+  const liveLogsContainer = document.getElementById('liveLogsContainer')
+  const liveLogs = document.getElementById('liveLogs')
+  const scanSpinner = document.getElementById('scanSpinner')
+
   if (!btn) return
 
-  const originalHTML = btn.innerHTML
-  const dateFrom = document.getElementById('date-from').value
-
+  // Reset UI
   btn.disabled = true
-  btn.innerHTML = `<i data-lucide="refresh-cw" class="w-4 h-4 animate-spin"></i> Scanning Gmail...`
+  btn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Scanning...`
   createIcons()
 
-  try {
-    const response = await fetch('/api/scan', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        // Default to last 24h if not specified
-        dateFrom: dateFrom || new Date(Date.now() - 86400000).toISOString().split('T')[0]
-      })
-    })
+  liveLogsContainer.classList.remove('hidden')
+  scanSpinner.classList.remove('hidden')
+  liveLogs.innerHTML = `<div class="text-slate-500 italic">Connecting to scanner stream...</div>`
 
-    const result = await response.json()
+  // Start EventSource
+  // Note: If running on different port in dev, you might need proxy, but here same origin
+  const url = `/api/scan/stream?dateFrom=${dateFrom || ''}`
+  const evtSource = new EventSource(url)
 
-    if (result.success) {
-      let msg = `Scan complete: ${result.processed.length} processed`
+  evtSource.onmessage = (event) => {
+    const data = JSON.parse(event.data)
 
-      // Add details about skipped files
-      if (result.skipped && result.skipped.length > 0) {
-        msg += `\n\nSkipped ${result.skipped.length} files:`
-        result.skipped.forEach(s => {
-          msg += `\n• ${s.filename}: ${s.reason}`
-        })
-      }
+    if (data.type === 'log') {
+      const line = document.createElement('div')
+      line.innerHTML = `<span class="opacity-50">[${new Date().toLocaleTimeString()}]</span> ${data.message}`
+      liveLogs.appendChild(line)
+      liveLogs.scrollTop = liveLogs.scrollHeight // Auto-scroll
+    }
+    else if (data.type === 'error') {
+      const line = document.createElement('div')
+      line.className = 'text-red-500 font-bold'
+      line.innerText = `ERROR: ${data.message}`
+      liveLogs.appendChild(line)
+      evtSource.close()
+      finalizeScan(btn)
+    }
+    else if (data.type === 'complete') {
+      const line = document.createElement('div')
+      line.className = 'text-white font-bold mt-4 pt-2 border-t border-slate-700'
+      line.innerText = `SCAN COMPLETE. Processed: ${data.summary.processed.length}, Skipped: ${data.summary.skipped.length}, Errors: ${data.summary.errors.length}`
+      liveLogs.appendChild(line)
 
-      // Add details about errors
-      if (result.errors && result.errors.length > 0) {
-        msg += `\n\nErrors (${result.errors.length}):`
-        result.errors.forEach(e => {
-          msg += `\n• Msg ID ${e.messageId}: ${e.error}`
-        })
-      }
-
-      if (result.skipped.length > 0 || result.errors.length > 0) {
-        alert(msg)
-      } else {
-        showToast(msg)
-      }
-
-      // Update State Logs (Prepend new items)
-      if (result.processed.length > 0) {
-        const newLogs = result.processed.map(item => ({
+      // Update State logs
+      if (data.summary.processed.length > 0) {
+        const newLogs = data.summary.processed.map(item => ({
           id: item.id || 'N/A',
           supplier: item.supplier || 'Unknown',
           date: item.date || 'N/A',
           amount: typeof item.amount === 'number' ? item.amount.toFixed(2) : item.amount,
-          status: 'Complete',
+          status: 'success',
           fileLink: item.fileLink
         }))
-
         state.logs = [...newLogs, ...state.logs]
         localStorage.setItem('ops_logs', JSON.stringify(state.logs))
-        renderDashboard()
+        // We don't re-render full dashboard to avoid killing the live log view
+        // But we could partial update. For now, user sees the log view.
       }
 
-    } else {
-      showToast('Scan failed: ' + (result.error || 'Unknown error'))
-    }
-  } catch (error) {
-    console.error('Scan error:', error)
-    showToast('Error triggering scan')
-  } finally {
-    if (btn) {
-      btn.disabled = false
-      btn.innerHTML = originalHTML
-      createIcons()
+      evtSource.close()
+      finalizeScan(btn)
+      scanSpinner.classList.add('hidden')
+
+      showToast('Scan Completed')
+      // Delay reload so they can read logs
+      setTimeout(() => renderDashboard(), 3000)
     }
   }
+
+  evtSource.onerror = (err) => {
+    console.error("EventSource failed:", err)
+    const line = document.createElement('div')
+    line.className = 'text-amber-500'
+    line.innerText = `Connection closed (possibly finished or timed out).`
+    liveLogs.appendChild(line)
+    evtSource.close()
+    finalizeScan(btn)
+  }
+}
+
+function finalizeScan(btn) {
+  btn.disabled = false
+  btn.innerHTML = `<i data-lucide="play" class="w-4 h-4"></i> Start Live Scan`
+  createIcons()
 }
 
 function showToast(msg) {
