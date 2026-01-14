@@ -392,7 +392,63 @@ function attachDashboardListeners() {
   }
 }
 
-// ... (triggerRealScan and showToast remain same)
+async function triggerRealScan() {
+  const btn = document.getElementById('triggerBtn')
+  if (!btn) return
+
+  const originalHTML = btn.innerHTML
+  const dateFrom = document.getElementById('date-from').value
+
+  btn.disabled = true
+  btn.innerHTML = `<i data-lucide="refresh-cw" class="w-4 h-4 animate-spin"></i> Scanning Gmail...`
+  lucide.createIcons()
+
+  try {
+    const response = await fetch('/api/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        // Default to last 24h if not specified
+        dateFrom: dateFrom || new Date(Date.now() - 86400000).toISOString().split('T')[0]
+      })
+    })
+
+    const result = await response.json()
+
+    if (result.success) {
+      showToast(`Scan complete: ${result.processed.length} processed`)
+      // Refresh log
+      // For MVP we just reload to fetch new state if persisted but we don't have persistence fetch yet?
+      // Actually we should just update dashboard if we had state management.
+      // For now, reload window is safest
+      setTimeout(() => window.location.reload(), 2000)
+    } else {
+      showToast('Scan failed: ' + (result.error || 'Unknown error'))
+    }
+  } catch (error) {
+    console.error('Scan error:', error)
+    showToast('Error triggering scan')
+  } finally {
+    if (btn) {
+      btn.disabled = false
+      btn.innerHTML = originalHTML
+      lucide.createIcons()
+    }
+  }
+}
+
+function showToast(msg) {
+  const toast = document.getElementById('toast')
+  const toastMsg = document.getElementById('toastMessage')
+  if (!toast || !toastMsg) return
+
+  toastMsg.innerText = msg
+  toast.classList.remove('translate-y-24')
+
+  setTimeout(() => {
+    toast.classList.add('translate-y-24')
+  }, 3000)
+}
 
 // ==================== INIT ====================
 async function checkStatus() {
