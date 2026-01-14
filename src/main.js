@@ -101,9 +101,7 @@ function renderDashboard() {
       <header class="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-200">
         <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <div class="bg-blue-600 p-1.5 rounded-lg text-white">
-              <i data-lucide="layers" class="w-5 h-5"></i>
-            </div>
+            <img src="/logo.png" alt="Pela Terra" class="w-8 h-8 rounded-lg" />
             <span class="font-bold text-xl tracking-tight text-slate-800">Pela Terra <span class="text-blue-600 text-sm font-medium">Operations</span></span>
           </div>
 
