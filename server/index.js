@@ -175,8 +175,19 @@ app.get('/api/scan/stream', async (req, res) => {
         res.end()
 
     } catch (error) {
-        console.error('Scan Error:', error)
-        sendEvent({ type: 'error', message: `Critical Scan Fail: ${error.message}` })
+        console.error('Scan Error (Full):', JSON.stringify(error, Object.getOwnPropertyNames(error), 2))
+
+        // Extract detailed error info
+        let errorMsg = error.message || 'Unknown error'
+        if (error.response && error.response.data) {
+            console.error('API Response Data:', JSON.stringify(error.response.data, null, 2))
+            errorMsg = `${error.response.data.error || errorMsg} - ${error.response.data.error_description || ''}`
+        }
+        if (error.errors && error.errors.length > 0) {
+            errorMsg = error.errors.map(e => `${e.reason}: ${e.message}`).join('; ')
+        }
+
+        sendEvent({ type: 'error', message: `Critical Scan Fail: ${errorMsg}` })
         res.end()
     }
 })
