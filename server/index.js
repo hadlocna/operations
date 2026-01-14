@@ -265,8 +265,23 @@ app.post('/api/scan', async (req, res) => {
     }
 })
 
+// ... API routes above
+
+// Serve static files in production
+import path from 'path'
+import { fileURLToPath } from 'url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const distPath = path.join(__dirname, '../dist')
+
+app.use(express.static(distPath))
+
+// Handle SPA routing - return index.html for all non-API routes
+app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'))
+})
+
 // Start server
 app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`)
-    console.log(`📧 OAuth callback: ${process.env.GOOGLE_REDIRECT_URI}`)
 })

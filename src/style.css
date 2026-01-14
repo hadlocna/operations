@@ -1,19 +1,19 @@
 :root {
   --font-family: 'Outfit', sans-serif;
-  --bg-color: #050505;
-  --bg-surface: #0a0a0a;
-  --card-bg: rgba(255, 255, 255, 0.03);
-  --card-border: rgba(255, 255, 255, 0.08);
+  --bg-color: #ffffff;
+  --bg-surface: #f8fafc;
+  --card-bg: rgba(255, 255, 255, 0.8);
+  --card-border: #e2e8f0;
   --accent-color: #3b82f6;
   --accent-hover: #2563eb;
-  --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+  --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
   --success-color: #10b981;
   --warning-color: #f59e0b;
   --error-color: #ef4444;
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --glass-blur: 16px;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  --glass-blur: 12px;
   --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   --radius-sm: 8px;
   --radius-md: 12px;
