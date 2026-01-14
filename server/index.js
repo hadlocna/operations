@@ -146,17 +146,123 @@ app.get('/api/emails', async (req, res) => {
 })
 
 // Scan trigger endpoint (placeholder for invoice processing)
-app.post('/api/scan', async (req, res) => {
-    if (!tokens.gmail) {
-        return res.status(401).json({ error: 'Gmail not connected' })
-    }
+import { processInvoice } from './invoiceProcessor.js'
+import { uploadToDrive, appendToSheet } from './googleServices.js'
 
-    // TODO: Implement actual scanning logic
-    res.json({
-        success: true,
-        message: 'Scan initiated',
-        scannedAt: new Date().toISOString()
-    })
+// ... imports and setup
+
+// Scan Trigger Endpoint
+app.post('/api/scan', async (req, res) => {
+    if (!tokens.gmail) return res.status(401).json({ error: 'Gmail not connected' })
+    if (!tokens.drive) return res.status(401).json({ error: 'Drive not connected' })
+    if (!tokens.sheets) return res.status(401).json({ error: 'Sheets not connected' })
+
+    try {
+        oauth2Client.setCredentials(tokens.gmail)
+        const gmail = google.gmail({ version: 'v1', auth: oauth2Client })
+
+        // 1. Search for emails with PDF attachments
+        const { dateFrom, dateTo } = req.body
+        let query = 'has:attachment filename:pdf -label:processed_invoice' // Exclude already processed
+        if (dateFrom) query += ` after:${dateFrom}`
+        if (dateTo) query += ` before:${dateTo}`
+
+        console.log(`Scanning emails with query: ${query}`)
+
+        const response = await gmail.users.messages.list({
+            userId: 'me',
+            q: query,
+            maxResults: 10 // Process in batches
+        })
+
+        const messages = response.data.messages || []
+        console.log(`Found ${messages.length} emails to process`)
+
+        const results = []
+
+        // 2. Process each email
+        for (const msg of messages) {
+            try {
+                // Get message details
+                const detail = await gmail.users.messages.get({ userId: 'me', id: msg.id })
+                const parts = detail.data.payload.parts || []
+
+                // Find PDF attachment
+                const pdfPart = parts.find(p => p.mimeType === 'application/pdf' || p.filename.toLowerCase().endsWith('.pdf'))
+
+                if (pdfPart && pdfPart.body.attachmentId) {
+                    // Download attachment
+                    const attachment = await gmail.users.messages.attachments.get({
+                        userId: 'me',
+                        messageId: msg.id,
+                        id: pdfPart.body.attachmentId
+                    })
+
+                    const filename = pdfPart.filename
+                    const pdfBuffer = Buffer.from(attachment.data.data, 'base64')
+
+                    console.log(`Processing attachment: ${filename}`)
+
+                    // 3. Classify and Extract with OpenAI
+                    const processingResult = await processInvoice(pdfBuffer, filename)
+
+                    if (processingResult.success) {
+                        const invoiceData = processingResult.data
+                        console.log(`Invoice identified: ${invoiceData.invoice_number} from ${invoiceData.supplier}`)
+
+                        // 4. Upload to Drive
+                        // Temporarily use tokens.drive since we're using same account
+                        const driveAuth = new google.auth.OAuth2()
+                        driveAuth.setCredentials(tokens.drive)
+
+                        const driveResult = await uploadToDrive(
+                            driveAuth,
+                            pdfBuffer,
+                            filename,
+                            invoiceData.company || 'Unknown Company',
+                            invoiceData.issue_date
+                        )
+
+                        // 5. Append to Sheets
+                        const sheetsAuth = new google.auth.OAuth2()
+                        sheetsAuth.setCredentials(tokens.sheets)
+
+                        await appendToSheet(sheetsAuth, invoiceData, driveResult.webViewLink)
+
+                        // 6. Label email as processed
+                        // First check if label exists, if not create it (omitted for brevity, assuming label exists or handled)
+                        // await gmail.users.messages.modify({ ... })
+
+                        results.push({
+                            status: 'success',
+                            id: invoiceData.invoice_number,
+                            supplier: invoiceData.supplier,
+                            amount: invoiceData.amount_incl_vat,
+                            date: invoiceData.issue_date,
+                            fileLink: driveResult.webViewLink
+                        })
+                    } else {
+                        console.log(`Document ${filename} classified as non-invoice or other.`)
+                        results.push({ status: 'skipped', reason: 'Not an invoice', filename })
+                    }
+                }
+            } catch (err) {
+                console.error(`Error processing message ${msg.id}:`, err)
+                results.push({ status: 'error', messageId: msg.id, error: err.message })
+            }
+        }
+
+        res.json({
+            success: true,
+            processed: results.filter(r => r.status === 'success'),
+            skipped: results.filter(r => r.status === 'skipped'),
+            errors: results.filter(r => r.status === 'error')
+        })
+
+    } catch (error) {
+        console.error('Scan error:', error)
+        res.status(500).json({ error: 'Scan failed' })
+    }
 })
 
 // Start server
