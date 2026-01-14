@@ -1,4 +1,5 @@
 import './style.css'
+console.log('App Updated: Single Auth Mode')
 
 // ==================== STATE ====================
 const state = {
@@ -392,7 +393,30 @@ async function triggerRealScan() {
     const result = await response.json()
 
     if (result.success) {
-      showToast(`Scan complete: ${result.processed.length} processed`)
+      let msg = `Scan complete: ${result.processed.length} processed`
+
+      // Add details about skipped files
+      if (result.skipped && result.skipped.length > 0) {
+        msg += `\n\nSkipped ${result.skipped.length} files:`
+        result.skipped.forEach(s => {
+          msg += `\n• ${s.filename}: ${s.reason}`
+        })
+      }
+
+      // Add details about errors
+      if (result.errors && result.errors.length > 0) {
+        msg += `\n\nErrors (${result.errors.length}):`
+        result.errors.forEach(e => {
+          msg += `\n• Msg ID ${e.messageId}: ${e.error}`
+        })
+      }
+
+      if (result.skipped.length > 0 || result.errors.length > 0) {
+        alert(msg) // Use alert for detailed report
+      } else {
+        showToast(msg)
+      }
+
       // Refresh log but wait a bit
       setTimeout(() => window.location.reload(), 2000)
     } else {
