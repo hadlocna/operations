@@ -138,7 +138,7 @@ app.get('/api/scan/stream', async (req, res) => {
         const gmail = google.gmail({ version: 'v1', auth })
 
         const query = dateFrom
-            ? `has:attachment filename:pdf after:${new Date(dateFrom).getTime() / 1000}`
+            ? `has:attachment filename:pdf after:${dateFrom.replace(/-/g, '/')}`
             : 'has:attachment filename:pdf newer_than:1d'
 
         sendEvent({ type: 'log', message: `Querying Gmail: "${query}"` })
