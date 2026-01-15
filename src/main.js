@@ -430,61 +430,60 @@ function attachDashboardListeners() {
       }
     })
   }
+}
 
+function finalizeScan(btn) {
+  btn.disabled = false
+  btn.innerHTML = `<i data-lucide="play" class="w-4 h-4"></i> Start Live Scan`
+  createIcons()
+}
 
+function showToast(msg) {
+  const toast = document.getElementById('toast')
+  const toastMsg = document.getElementById('toastMessage')
+  if (!toast || !toastMsg) return
 
-  function finalizeScan(btn) {
-    btn.disabled = false
-    btn.innerHTML = `<i data-lucide="play" class="w-4 h-4"></i> Start Live Scan`
-    createIcons()
+  toastMsg.innerText = msg
+  toast.classList.remove('translate-y-24')
+
+  setTimeout(() => {
+    toast.classList.add('translate-y-24')
+  }, 3000)
+}
+
+// ==================== INIT ====================
+async function checkStatus() {
+  const user = state.currentUser || localStorage.getItem('currentUser')
+  if (!user) return
+
+  try {
+    const res = await fetch(`/api/status?username=${user}`)
+    const data = await res.json()
+    // Unified status
+    state.oauth.connected = data.connected
+    state.oauth.email = data.email || null
+  } catch (e) {
+    console.error('Failed to fetch status')
+  }
+}
+
+async function init() {
+  // Check for successful oauth return
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('oauth') === 'success') {
+    state.isLoggedIn = true
+    localStorage.setItem('isLoggedIn', 'true')
+    window.history.replaceState({}, document.title, "/") // Clean URL
   }
 
-  function showToast(msg) {
-    const toast = document.getElementById('toast')
-    const toastMsg = document.getElementById('toastMessage')
-    if (!toast || !toastMsg) return
-
-    toastMsg.innerText = msg
-    toast.classList.remove('translate-y-24')
-
-    setTimeout(() => {
-      toast.classList.add('translate-y-24')
-    }, 3000)
+  if (localStorage.getItem('isLoggedIn') === 'true') {
+    state.isLoggedIn = true
+    state.currentUser = localStorage.getItem('currentUser')
+    await checkStatus() // Sync with backend
+    renderDashboard()
+  } else {
+    renderLogin()
   }
+}
 
-  // ==================== INIT ====================
-  async function checkStatus() {
-    const user = state.currentUser || localStorage.getItem('currentUser')
-    if (!user) return
-
-    try {
-      const res = await fetch(`/api/status?username=${user}`)
-      const data = await res.json()
-      // Unified status
-      state.oauth.connected = data.connected
-      state.oauth.email = data.email || null
-    } catch (e) {
-      console.error('Failed to fetch status')
-    }
-  }
-
-  async function init() {
-    // Check for successful oauth return
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('oauth') === 'success') {
-      state.isLoggedIn = true
-      localStorage.setItem('isLoggedIn', 'true')
-      window.history.replaceState({}, document.title, "/") // Clean URL
-    }
-
-    if (localStorage.getItem('isLoggedIn') === 'true') {
-      state.isLoggedIn = true
-      state.currentUser = localStorage.getItem('currentUser')
-      await checkStatus() // Sync with backend
-      renderDashboard()
-    } else {
-      renderLogin()
-    }
-  }
-
-  init()
+init()
