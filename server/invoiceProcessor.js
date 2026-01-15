@@ -81,7 +81,7 @@ export async function processInvoice(fileBuffer, originalFilename) {
                     strict: true,
                     schema: {
                         type: "object",
-                        required: ["is_invoice_document"],
+                        required: ["is_invoice_document", "reason", "invoice_number", "issue_date", "total_amount", "amount_excl_vat", "vat_amount", "currency", "supplier_name", "customer_name", "line_items_present", "description", "notes"],
                         properties: {
                             is_invoice_document: { type: "boolean" },
                             reason: { type: ["string", "null"] },

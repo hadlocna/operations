@@ -61,6 +61,55 @@ async function deleteToken(service) {
     if (error) console.error(`Error deleting ${service} token:`, error)
 }
 
+// OAuth2 Client (must be defined early for helper functions)
+const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+)
+
+// Helper: Get authenticated client with automatic token refresh
+async function getAuthenticatedClient() {
+    const tokenContainer = await getTokens()
+    const googleToken = tokenContainer.google
+
+    if (!googleToken) {
+        throw new Error('Google Account not connected')
+    }
+
+    // Set credentials on the configured client (with client ID/secret)
+    oauth2Client.setCredentials(googleToken)
+
+    // Check if access token is expired and we have a refresh token
+    const now = Date.now()
+    const expiryDate = googleToken.expiry_date || 0
+
+    if (now >= expiryDate && googleToken.refresh_token) {
+        console.log('[AUTH] Access token expired, refreshing...')
+        try {
+            const { credentials } = await oauth2Client.refreshAccessToken()
+
+            // Merge the new tokens (keep refresh_token if not returned)
+            const updatedTokens = {
+                ...googleToken,
+                ...credentials,
+                refresh_token: credentials.refresh_token || googleToken.refresh_token
+            }
+
+            // Save the refreshed tokens
+            await saveToken('google', updatedTokens)
+            oauth2Client.setCredentials(updatedTokens)
+
+            console.log('[AUTH] Token refreshed successfully')
+        } catch (refreshError) {
+            console.error('[AUTH] Token refresh failed:', refreshError.message)
+            throw new Error('Token refresh failed. Please re-authenticate.')
+        }
+    }
+
+    return oauth2Client
+}
+
 // Routes
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }))
 
@@ -70,12 +119,6 @@ app.get('/api/status', async (req, res) => {
         connected: !!tokens.google
     })
 })
-
-const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
-)
 
 // Auth Routes
 app.get('/auth/google', (req, res) => {
@@ -124,17 +167,15 @@ app.get('/api/scan/stream', async (req, res) => {
 
         sendEvent({ type: 'log', message: 'Initializing Scan Process...' })
 
-        // Fetch Tokens
-        const tokenContainer = await getTokens()
-        const googleToken = tokenContainer.google
-
-        if (!googleToken) {
-            sendEvent({ type: 'error', message: 'Google Account not connected.' })
+        // Get authenticated client with automatic token refresh
+        let auth
+        try {
+            auth = await getAuthenticatedClient()
+        } catch (authError) {
+            sendEvent({ type: 'error', message: authError.message })
             return res.end()
         }
 
-        const auth = new google.auth.OAuth2()
-        auth.setCredentials(googleToken)
         const gmail = google.gmail({ version: 'v1', auth })
 
         const query = dateFrom
