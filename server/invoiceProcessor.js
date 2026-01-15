@@ -8,25 +8,23 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
 })
 
-// === COMPANY LISTS ===
+// === COMPANY LISTS (Exact folder names from Drive) ===
 const COMPANIES = {
     SPVS_AGRIOPS: [
-        'SELVATAREFADA',
-        'CALENDÁRIO VERDE',
-        'BINOMIAL DESTINY',
-        'AMANDEL',
-        'NSA',
-        'NOVOS SISTEMAS AGRÍCOLAS',
-        'FAUNOS COSMOPOLITAS',
-        'KLÖSTERS PORTUGAL',
-        'AGRILAGOON'
+        { match: ['SELVATAREFADA'], folder: 'SELVATAREFADA - UNIPESSOAL LDA' },
+        { match: ['CALENDÁRIO VERDE', 'CALENDARIO VERDE'], folder: 'CALENDÁRIO VERDE - LDA' },
+        { match: ['BINOMIAL DESTINY'], folder: 'BINOMIAL DESTINY, UNIPESSOAL, LDA' },
+        { match: ['AMANDEL'], folder: 'AMANDEL UNIPESSOAL LDA' },
+        { match: ['NSA', 'NOVOS SISTEMAS AGRÍCOLAS', 'NOVOS SISTEMAS AGRICOLAS'], folder: 'NSA - NOVOS SISTEMAS AGRÍCOLAS, LDA' },
+        { match: ['FAUNOS COSMOPOLITAS'], folder: 'FAUNOS COSMOPOLITAS UNIPESSOAL, LDA' },
+        { match: ['KLÖSTERS', 'KLOSTERS'], folder: 'KLÖSTERS PORTUGAL, UNIPESSOAL LDA' },
+        { match: ['AGRILAGOON'], folder: 'AGRILAGOON, UNIPESSOAL LDA' }
     ],
     INTERNAL: [
-        'YOUR OWN 2 FEET',
-        'HEXAGONO CORAJOSO',
-        "QUIOSQUE D'ALEGRIA",
-        'QUIOSQUE D ALEGRIA', // Variant
-        'IMPACTO PELA TERRA'
+        { match: ['YOUR OWN 2 FEET', 'YOUR OWN TWO FEET'], folder: 'Your Own 2 Feet' },
+        { match: ['HEXAGONO CORAJOSO'], folder: 'HEXAGONO CORAJOSO LDA LDA' },
+        { match: ['QUIOSQUE D\'ALEGRIA', 'QUIOSQUE D ALEGRIA', 'QUIOSQUE DALEGRIA'], folder: 'Quiosque D\'Alegria - Unipessoal Lda' },
+        { match: ['IMPACTO PELA TERRA'], folder: 'IMPACTO PELA TERRA LDA' }
     ]
 }
 
@@ -155,33 +153,40 @@ function determineRouting(customerName, supplierName) {
         return str.toUpperCase()
             .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "")
             .replace(/\s{2,}/g, " ")
-            .replace(/\s(LDA|UNIPESSOAL|SA|LIMITADA)$/, "")
             .trim()
     }
 
     const targetName = normalize(customerName) || normalize(supplierName)
+    console.log(`[ROUTING] Matching "${targetName}" to company folders...`)
 
-    // Check SPVs
+    // Check SPVs_AgriOps
     for (const company of COMPANIES.SPVS_AGRIOPS) {
-        if (targetName.includes(normalize(company))) {
-            return {
-                category: 'SPVs_AgriOps',
-                folderName: company
+        for (const pattern of company.match) {
+            if (targetName.includes(normalize(pattern))) {
+                console.log(`[ROUTING] Matched "${pattern}" → ${company.folder}`)
+                return {
+                    category: 'SPVs_AgriOps',
+                    folderName: company.folder
+                }
             }
         }
     }
 
-    // Check Internal
+    // Check Companies_Internal
     for (const company of COMPANIES.INTERNAL) {
-        if (targetName.includes(normalize(company))) {
-            return {
-                category: 'Companies_Internal',
-                folderName: company
+        for (const pattern of company.match) {
+            if (targetName.includes(normalize(pattern))) {
+                console.log(`[ROUTING] Matched "${pattern}" → ${company.folder}`)
+                return {
+                    category: 'Companies_Internal',
+                    folderName: company.folder
+                }
             }
         }
     }
 
-    // Default / Fallback
+    // Default / Fallback - create a new folder
+    console.log(`[ROUTING] No match found, using Unsorted`)
     return {
         category: 'Unsorted',
         folderName: targetName || 'Unknown_Entity'
