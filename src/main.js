@@ -11,7 +11,12 @@ const state = {
   logs: JSON.parse(localStorage.getItem('ops_logs') || '[]') // Init from storage
 }
 
-const APP_PASSWORD = 'leanne'
+const USERS = {
+  'alex': 'alex',
+  'nick': 'nick',
+  'leanne': 'leanne',
+  'nathan': 'nathan'
+}
 
 // ==================== RENDER FUNCTIONS ====================
 const app = document.querySelector('#app')
@@ -34,6 +39,21 @@ function renderLogin() {
           <p class="text-slate-500 mt-2">Please enter the system password</p>
         </div>
         <form id="login-form" class="space-y-5">
+          <div>
+            <label class="block text-sm font-semibold text-slate-700 mb-1.5">User</label>
+            <div class="relative">
+              <select id="userInput" class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-4 focus:ring-blue-50 focus:border-blue-500 outline-none transition-all appearance-none bg-white text-slate-700 font-medium cursor-pointer">
+                <option value="" disabled selected>Select your name</option>
+                <option value="alex">Alex</option>
+                <option value="nick">Nick</option>
+                <option value="leanne">Leanne</option>
+                <option value="nathan">Nathan</option>
+              </select>
+              <div class="absolute inset-y-0 right-0 flex items-center px-4 pointer-events-none text-slate-500">
+                <i data-lucide="chevron-down" class="w-4 h-4"></i>
+              </div>
+            </div>
+          </div>
           <div>
             <label class="block text-sm font-semibold text-slate-700 mb-1.5">Password</label>
             <input type="password" id="passwordInput" class="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-4 focus:ring-blue-50 focus:border-blue-500 outline-none transition-all placeholder:text-slate-300" placeholder="••••••••">
@@ -257,11 +277,12 @@ function renderLogRows() {
 // ==================== EVENT HANDLERS & SSE ====================
 function handleLogin(e) {
   e.preventDefault()
+  const selectedUser = document.getElementById('userInput').value
   const password = document.getElementById('passwordInput').value
   const errorEl = document.getElementById('loginError')
   const gate = document.getElementById('loginGate')
 
-  if (password === APP_PASSWORD) {
+  if (USERS[selectedUser] && USERS[selectedUser] === password) {
     state.isLoggedIn = true
     localStorage.setItem('isLoggedIn', 'true')
     gate.classList.add('opacity-0')
