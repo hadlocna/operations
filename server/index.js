@@ -33,22 +33,34 @@ const supabase = createClient(
 
 // Helper: Get Tokens (Consolidated)
 async function getTokens() {
+    console.log('[DB] Fetching tokens from Supabase...')
     const { data, error } = await supabase
         .from('system_tokens')
         .select('*')
         .eq('service_name', 'google')
         .single()
 
+    if (error) {
+        console.log('[DB] getTokens error:', error.message)
+    } else {
+        console.log('[DB] getTokens result:', data ? `Found token for ${data.token_json?.email || 'unknown'}` : 'No token found')
+    }
+
     return data ? { google: data.token_json } : { google: null }
 }
 
-// Helper: Save Token
 async function saveToken(service, token) {
-    const { error } = await supabase
+    console.log(`[DB] Saving ${service} token for ${token.email || 'unknown'}...`)
+    const { data, error } = await supabase
         .from('system_tokens')
         .upsert({ service_name: service, token_json: token }, { onConflict: 'service_name' })
+        .select()
 
-    if (error) console.error(`Error saving ${service} token:`, error)
+    if (error) {
+        console.error(`[DB] Error saving ${service} token:`, error)
+    } else {
+        console.log(`[DB] Token saved successfully:`, data)
+    }
 }
 
 // Helper: Delete Token
