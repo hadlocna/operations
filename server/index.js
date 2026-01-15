@@ -116,7 +116,8 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Dat
 app.get('/api/status', async (req, res) => {
     const tokens = await getTokens()
     res.json({
-        connected: !!tokens.google
+        connected: !!tokens.google,
+        email: tokens.google?.email || null
     })
 })
 
@@ -134,9 +135,17 @@ app.get('/auth/google/callback', async (req, res) => {
     const { code } = req.query
     try {
         const { tokens: newTokens } = await oauth2Client.getToken(code)
+        oauth2Client.setCredentials(newTokens)
 
-        // Save single token for all services
-        await saveToken('google', newTokens)
+        // Fetch user info to get email
+        const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client })
+        const userInfo = await oauth2.userinfo.get()
+        const email = userInfo.data.email
+
+        console.log(`[AUTH] Connected as: ${email}`)
+
+        // Save token with email for display
+        await saveToken('google', { ...newTokens, email })
 
         console.log('Tokens acquired and saved')
         res.redirect('/?oauth=success')
@@ -177,6 +186,27 @@ app.get('/api/scan/stream', async (req, res) => {
         }
 
         const gmail = google.gmail({ version: 'v1', auth })
+        const drive = google.drive({ version: 'v3', auth })
+
+        // Pre-flight Check: Verify Drive folder access
+        const rootFolderId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID
+        if (!rootFolderId) {
+            sendEvent({ type: 'error', message: 'GOOGLE_DRIVE_ROOT_FOLDER_ID is not configured.' })
+            return res.end()
+        }
+
+        try {
+            sendEvent({ type: 'log', message: `Verifying access to Drive folder...` })
+            const folderCheck = await drive.files.get({
+                fileId: rootFolderId,
+                fields: 'id, name, mimeType'
+            })
+            sendEvent({ type: 'log', message: `✓ Drive folder verified: "${folderCheck.data.name}"` })
+        } catch (driveError) {
+            console.error('[DRIVE] Folder access check failed:', driveError.message)
+            sendEvent({ type: 'error', message: `Cannot access Drive folder (${rootFolderId}). Please ensure the connected Google account (${(await getTokens()).google?.email || 'unknown'}) has access to this folder.` })
+            return res.end()
+        }
 
         const query = dateFrom
             ? `has:attachment filename:pdf after:${dateFrom}`

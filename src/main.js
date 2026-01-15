@@ -73,7 +73,7 @@ function renderDashboard() {
             <div class="hidden md:flex items-center gap-6 px-4 py-1.5 bg-slate-50 rounded-full border border-slate-100">
               <div class="flex items-center gap-2 text-xs font-semibold">
                 <span class="w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 status-pulse shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-300'}"></span>
-                <span class="text-slate-500 uppercase tracking-wider">Services</span>
+                <span class="text-slate-500 uppercase tracking-wider">${isConnected && state.oauth.email ? state.oauth.email : 'Not Connected'}</span>
               </div>
             </div>
             <button id="logout-btn" class="w-9 h-9 bg-gradient-to-br from-blue-50 to-blue-100 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs border border-blue-200 hover:shadow-md transition-all cursor-pointer">
@@ -436,6 +436,7 @@ async function checkStatus() {
     const data = await res.json()
     // Unified status
     state.oauth.connected = data.connected
+    state.oauth.email = data.email || null
   } catch (e) {
     console.error('Failed to fetch status')
   }
