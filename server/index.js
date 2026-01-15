@@ -201,7 +201,7 @@ app.get('/api/scan/stream', async (req, res) => {
         const BATCH_SIZE = 1 // Process 1 by 1 for better streaming feel? Or keep batch but log carefully.
         // Let's do serial or small batch execution to ensure logs stream nicely
         for (const msg of messages) {
-            await processMessage(gmail, msg, results, googleToken, sendEvent)
+            await processMessage(gmail, msg, results, auth, sendEvent)
         }
 
         // Final Summary
@@ -234,7 +234,7 @@ app.get('/api/scan/stream', async (req, res) => {
 })
 
 
-async function processMessage(gmail, msg, results, googleToken, sendEvent) {
+async function processMessage(gmail, msg, results, auth, sendEvent) {
     try {
         // Log "Processing Message ID..."
         // sendEvent({ type: 'log', message: `checking msg ${msg.id.substring(0,5)}...` })
@@ -276,25 +276,19 @@ async function processMessage(gmail, msg, results, googleToken, sendEvent) {
                 sendEvent({ type: 'log', message: `✅ Valid Invoice Identified: #${invoiceData.invoice_number}` })
                 sendEvent({ type: 'log', message: `   Supplier: ${invoiceData.supplier_name} | Amount: ${invoiceData.total_amount}` })
 
-                // Upload Drive (Reuse auth)
-                const driveAuth = new google.auth.OAuth2()
-                driveAuth.setCredentials(googleToken)
-
+                // Upload Drive (Reuse same auth client)
                 sendEvent({ type: 'log', message: `   Uploading to Drive...` })
                 const driveResult = await uploadToDrive(
-                    driveAuth,
+                    auth,
                     pdfBuffer,
                     filename,
                     invoiceData.routing,
                     invoiceData.issue_date
                 )
 
-                // Sheets (Reuse auth)
-                const sheetsAuth = new google.auth.OAuth2()
-                sheetsAuth.setCredentials(googleToken)
-
+                // Sheets (Reuse same auth client)
                 sendEvent({ type: 'log', message: `   Appending to Sheets...` })
-                await appendToSheet(sheetsAuth, invoiceData, driveResult.webViewLink)
+                await appendToSheet(auth, invoiceData, driveResult.webViewLink)
 
                 results.push({
                     status: 'success',
