@@ -33,12 +33,12 @@ const supabase = createClient(
 )
 
 // Helper: Get Tokens (Consolidated)
-async function getTokens() {
-    console.log('[DB] Fetching tokens from Supabase...')
+async function getTokens(key = 'google') {
+    console.log(`[DB] Fetching tokens for ${key} from Supabase...`)
     const { data, error } = await supabase
         .from('system_tokens')
         .select('*')
-        .eq('service_name', 'google')
+        .eq('service_name', key)
         .single()
 
     if (error) {
@@ -82,12 +82,12 @@ const oauth2Client = new google.auth.OAuth2(
 )
 
 // Helper: Get authenticated client with automatic token refresh
-async function getAuthenticatedClient() {
-    const tokenContainer = await getTokens()
+async function getAuthenticatedClient(key = 'google') {
+    const tokenContainer = await getTokens(key)
     const googleToken = tokenContainer.google
 
     if (!googleToken) {
-        throw new Error('Google Account not connected')
+        throw new Error(`Google Account not connected (${key})`)
     }
 
     // Set credentials on the configured client (with client ID/secret)
@@ -127,25 +127,43 @@ async function getAuthenticatedClient() {
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }))
 
 app.get('/api/status', async (req, res) => {
-    const tokens = await getTokens()
+    const { username } = req.query
+    const serviceName = username ? `google:${username}` : 'google'
+
+    // Helper to get specific token key
+    const getTokenByKey = async (key) => {
+        const { data } = await supabase
+            .from('system_tokens')
+            .select('*')
+            .eq('service_name', key)
+            .single()
+        return data ? data.token_json : null
+    }
+
+    const token = await getTokenByKey(serviceName)
+
     res.json({
-        connected: !!tokens.google,
-        email: tokens.google?.email || null
+        connected: !!token,
+        email: token?.email || null
     })
 })
 
 // Auth Routes
 app.get('/auth/google', (req, res) => {
+    const { username } = req.query
     const authUrl = oauth2Client.generateAuthUrl({
         access_type: 'offline', // Crucial for refresh tokens
         scope: SCOPES,
-        prompt: 'consent' // Force refresh token generation
+        prompt: 'consent', // Force refresh token generation
+        state: username // Pass username to callback
     })
     res.redirect(authUrl)
 })
 
 app.get('/auth/google/callback', async (req, res) => {
-    const { code } = req.query
+    const { code, state } = req.query // state is the username
+    const username = state || 'default'
+
     try {
         const { tokens: newTokens } = await oauth2Client.getToken(code)
         oauth2Client.setCredentials(newTokens)
@@ -155,12 +173,12 @@ app.get('/auth/google/callback', async (req, res) => {
         const userInfo = await oauth2.userinfo.get()
         const email = userInfo.data.email
 
-        console.log(`[AUTH] Connected as: ${email}`)
+        console.log(`[AUTH] User "${username}" connected as: ${email}`)
 
-        // Save token with email for display
-        await saveToken('google', { ...newTokens, email })
+        // Save token with email for display, keyed by user
+        await saveToken(`google:${username}`, { ...newTokens, email })
 
-        console.log('Tokens acquired and saved')
+        console.log(`Tokens for ${username} acquired and saved`)
         res.redirect('/?oauth=success')
     } catch (error) {
         console.error('Error in auth callback:', error)
@@ -169,7 +187,9 @@ app.get('/auth/google/callback', async (req, res) => {
 })
 
 app.post('/api/oauth/revoke', async (req, res) => {
-    await deleteToken('google')
+    const { username } = req.body
+    const serviceName = username ? `google:${username}` : 'google'
+    await deleteToken(serviceName)
     res.json({ success: true })
 })
 
@@ -185,14 +205,15 @@ app.get('/api/scan/stream', async (req, res) => {
     }
 
     try {
-        const { dateFrom } = req.query
+        const { dateFrom, username } = req.query
+        const serviceName = username ? `google:${username}` : 'google'
 
-        sendEvent({ type: 'log', message: 'Initializing Scan Process...' })
+        sendEvent({ type: 'log', message: `Initializing Scan Process for user: ${username || 'default'}...` })
 
         // Get authenticated client with automatic token refresh
         let auth
         try {
-            auth = await getAuthenticatedClient()
+            auth = await getAuthenticatedClient(serviceName)
         } catch (authError) {
             sendEvent({ type: 'error', message: authError.message })
             return res.end()
@@ -218,7 +239,8 @@ app.get('/api/scan/stream', async (req, res) => {
             sendEvent({ type: 'log', message: `✓ Drive folder verified: "${folderCheck.data.name}"` })
         } catch (driveError) {
             console.error('[DRIVE] Folder access check failed:', driveError.message)
-            sendEvent({ type: 'error', message: `Cannot access Drive folder (${rootFolderId}). Please ensure the connected Google account (${(await getTokens()).google?.email || 'unknown'}) has access to this folder.` })
+            const token = (await getTokens(serviceName)).google
+            sendEvent({ type: 'error', message: `Cannot access Drive folder (${rootFolderId}). Please ensure the connected Google account (${token?.email || 'unknown'}) has access to this folder.` })
             return res.end()
         }
 
@@ -311,7 +333,17 @@ async function processMessage(gmail, msg, results, auth, sendEvent) {
             })
 
             const pdfBuffer = Buffer.from(attachment.data.data, 'base64')
-            sendEvent({ type: 'log', message: `🤖 Analyzing "${filename}" with GPT-4o...` })
+
+            // Skip PDFs larger than 500KB (likely reports, not invoices)
+            const MAX_PDF_SIZE_KB = 500
+            const fileSizeKB = Math.round(pdfBuffer.length / 1024)
+            if (fileSizeKB > MAX_PDF_SIZE_KB) {
+                sendEvent({ type: 'log', message: `⏭️ Skipped "${filename}": File too large (${fileSizeKB}KB > ${MAX_PDF_SIZE_KB}KB limit) - likely not an invoice` })
+                results.push({ status: 'skipped', name: filename, reason: `File too large (${fileSizeKB}KB)` })
+                return
+            }
+
+            sendEvent({ type: 'log', message: `🤖 Analyzing "${filename}" (${fileSizeKB}KB) with GPT-4o...` })
 
             const processingResult = await processInvoice(pdfBuffer, filename)
 
