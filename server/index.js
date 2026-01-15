@@ -3,10 +3,12 @@ import cors from 'cors'
 import { config } from 'dotenv'
 import { google } from 'googleapis'
 import { createClient } from '@supabase/supabase-js'
+import AdmZip from 'adm-zip'
+import fs from 'fs/promises'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { processInvoice } from './invoiceProcessor.js'
-import { uploadToDrive, appendToSheet } from './googleServices.js'
+import { uploadToDrive, appendToSheet, checkIfInvoiceExists } from './googleServices.js'
 
 config()
 
@@ -58,9 +60,9 @@ async function saveToken(service, token) {
         .select()
 
     if (error) {
-        console.error(`[DB] Error saving ${service} token:`, error)
+        console.error(`[DB] Error saving ${service} token: `, error)
     } else {
-        console.log(`[DB] Token saved successfully:`, data)
+        console.log(`[DB] Token saved successfully: `, data)
     }
 }
 
@@ -71,7 +73,7 @@ async function deleteToken(service) {
         .delete()
         .eq('service_name', service)
 
-    if (error) console.error(`Error deleting ${service} token:`, error)
+    if (error) console.error(`Error deleting ${service} token: `, error)
 }
 
 // OAuth2 Client (must be defined early for helper functions)
@@ -303,89 +305,137 @@ app.get('/api/scan/stream', async (req, res) => {
 async function processMessage(gmail, msg, results, auth, sendEvent) {
     try {
         // Log "Processing Message ID..."
-        // sendEvent({ type: 'log', message: `checking msg ${msg.id.substring(0,5)}...` })
+        // sendEvent({ type: 'log', message: `checking msg ${msg.id.substring(0, 5)}...` })
 
         const message = await gmail.users.messages.get({ userId: 'me', id: msg.id })
+        const headers = message.data.payload.headers
+        const fromHeader = headers.find(h => h.name === 'From')?.value || 'Unknown Sender'
+        // Extract just the email: "Name <email@domain.com>" -> "email@domain.com"
+        const senderEmail = fromHeader.match(/<(.+)>/)?.[1] || fromHeader
+
         const parts = message.data.payload.parts || []
 
-        // Recursive function to find PDF in multipart structure
-        function findPdfPart(parts) {
+        // Recursive function to find ALL relevant attachments (PDFs + ZIPs)
+        function findAttachments(parts) {
+            let found = []
             for (const p of parts) {
-                if (p.mimeType === 'application/pdf' && p.filename) return p
+                if ((p.mimeType === 'application/pdf' || p.mimeType === 'application/zip' || p.filename?.endsWith('.zip')) && p.filename && p.body?.attachmentId) {
+                    found.push(p)
+                }
                 if (p.parts) { // check nested parts
-                    const nested = findPdfPart(p.parts)
-                    if (nested) return nested
+                    found = found.concat(findAttachments(p.parts))
                 }
             }
-            return null
+            return found
         }
 
-        const pdfPart = findPdfPart(parts)
+        const attachments = findAttachments(parts)
 
-        if (pdfPart && pdfPart.body.attachmentId) {
-            const filename = pdfPart.filename
-            sendEvent({ type: 'log', message: `📄 Found PDF: "${filename}" - Downloading...` })
+        if (attachments.length > 0) {
+            sendEvent({ type: 'log', message: `msg ${msg.id.substring(0, 5)}: Found ${attachments.length} attachment(s)` })
+        }
 
-            const attachment = await gmail.users.messages.attachments.get({
+        for (const part of attachments) {
+            const filename = part.filename
+            const isZip = part.mimeType === 'application/zip' || filename.endsWith('.zip')
+
+            sendEvent({ type: 'log', message: `📎 Downloading "${filename}"...` })
+
+            const attachmentData = await gmail.users.messages.attachments.get({
                 userId: 'me',
                 messageId: msg.id,
-                id: pdfPart.body.attachmentId
+                id: part.body.attachmentId
             })
 
-            const pdfBuffer = Buffer.from(attachment.data.data, 'base64')
+            const fileBuffer = Buffer.from(attachmentData.data.data, 'base64')
 
-            // Skip PDFs larger than 500KB (likely reports, not invoices)
-            const MAX_PDF_SIZE_KB = 500
-            const fileSizeKB = Math.round(pdfBuffer.length / 1024)
-            if (fileSizeKB > MAX_PDF_SIZE_KB) {
-                sendEvent({ type: 'log', message: `⏭️ Skipped "${filename}": File too large (${fileSizeKB}KB > ${MAX_PDF_SIZE_KB}KB limit) - likely not an invoice` })
-                results.push({ status: 'skipped', name: filename, reason: `File too large (${fileSizeKB}KB)` })
-                return
-            }
+            if (isZip) {
+                // ZIP HANDLING
+                try {
+                    sendEvent({ type: 'log', message: `📦 Unzipping "${filename}"...` })
+                    const zip = new AdmZip(fileBuffer)
+                    const zipEntries = zip.getEntries()
 
-            sendEvent({ type: 'log', message: `🤖 Analyzing "${filename}" (${fileSizeKB}KB) with GPT-4o...` })
-
-            const processingResult = await processInvoice(pdfBuffer, filename)
-
-            if (processingResult.success) {
-                const invoiceData = processingResult.data
-                sendEvent({ type: 'log', message: `✅ Valid Invoice Identified: #${invoiceData.invoice_number}` })
-                sendEvent({ type: 'log', message: `   Supplier: ${invoiceData.supplier_name} | Amount: ${invoiceData.total_amount}` })
-
-                // Upload Drive (Reuse same auth client)
-                sendEvent({ type: 'log', message: `   Uploading to Drive...` })
-                const driveResult = await uploadToDrive(
-                    auth,
-                    pdfBuffer,
-                    filename,
-                    invoiceData.routing,
-                    invoiceData.issue_date
-                )
-
-                // Sheets (Reuse same auth client)
-                sendEvent({ type: 'log', message: `   Appending to Sheets...` })
-                await appendToSheet(auth, invoiceData, driveResult.webViewLink)
-
-                results.push({
-                    status: 'success',
-                    id: invoiceData.invoice_number,
-                    supplier: invoiceData.supplier_name,
-                    amount: invoiceData.total_amount,
-                    date: invoiceData.issue_date,
-                    fileLink: driveResult.webViewLink
-                })
+                    for (const entry of zipEntries) {
+                        if (!entry.isDirectory && entry.entryName.toLowerCase().endsWith('.pdf')) {
+                            // Process inner PDF
+                            const innerPdfBuffer = entry.getData()
+                            const innerFilename = entry.entryName.split('/').pop() // simplistic get filename
+                            await handlePdfProcessing(innerPdfBuffer, innerFilename, results, auth, sendEvent, senderEmail)
+                        }
+                    }
+                } catch (zipError) {
+                    console.error('Error processing ZIP:', zipError)
+                    sendEvent({ type: 'error', message: `Failed to unzip ${filename}: ${zipError.message}` })
+                }
             } else {
-                const reason = processingResult.reason || "Unknown Reason"
-                sendEvent({ type: 'log', message: `⚠️ Skipped "${filename}": ${reason}` })
-                results.push({ status: 'skipped', reason: reason, filename })
+                // STANDARD PDF HANDLING
+                await handlePdfProcessing(fileBuffer, filename, results, auth, sendEvent, senderEmail)
             }
-        } else {
-            // sendEvent({ type: 'log', message: `(Skipping msg ${msg.id}: No PDF attachment)` })
         }
-    } catch (err) {
-        console.error(`Processing error:`, err)
-        sendEvent({ type: 'error', message: `Error processing ${msg.id}: ${err.message}` })
-        results.push({ status: 'error', messageId: msg.id, error: err.message })
+    } catch (msgError) {
+        console.error('Error processing message:', msgError)
+        sendEvent({ type: 'error', message: `Error processing email ${msg.id}: ${msgError.message}` })
+    }
+}
+
+// Helper to process a single PDF buffer
+async function handlePdfProcessing(pdfBuffer, filename, results, auth, sendEvent, senderEmail) {
+    // Skip PDFs larger than 500KB
+    const MAX_PDF_SIZE_KB = 500
+    const fileSizeKB = Math.round(pdfBuffer.length / 1024)
+    if (fileSizeKB > MAX_PDF_SIZE_KB) {
+        sendEvent({ type: 'log', message: `⏭️ Skipped "${filename}": File too large (${fileSizeKB}KB > ${MAX_PDF_SIZE_KB}KB limit)` })
+        results.push({ status: 'skipped', name: filename, reason: `File too large (${fileSizeKB}KB)` })
+        return
+    }
+
+    sendEvent({ type: 'log', message: `🤖 Analyzing "${filename}" (${fileSizeKB}KB)...` })
+
+    const processingResult = await processInvoice(pdfBuffer, filename)
+
+    if (processingResult.success) {
+        const invoiceData = processingResult.data
+
+        // DUPLICATE CHECK
+        sendEvent({ type: 'log', message: `   Checking for duplicates (Invoice #${invoiceData.invoice_number})...` })
+        const isDuplicate = await checkIfInvoiceExists(auth, invoiceData.invoice_number)
+
+        if (isDuplicate) {
+            sendEvent({ type: 'log', message: `⚠️ Skipped "${filename}": Duplicate Invoice #${invoiceData.invoice_number} found in Sheets.` })
+            results.push({ status: 'skipped', name: filename, reason: `Duplicate Invoice #${invoiceData.invoice_number}` })
+            return
+        }
+
+        sendEvent({ type: 'log', message: `✅ Valid Invoice Identified: #${invoiceData.invoice_number}` })
+        sendEvent({ type: 'log', message: `   Supplier: ${invoiceData.supplier_name} | Amount: ${invoiceData.total_amount}` })
+
+        // Upload Drive (Reuse same auth client)
+        sendEvent({ type: 'log', message: `   Uploading to Drive...` })
+        const driveResult = await uploadToDrive(
+            auth,
+            pdfBuffer,
+            filename,
+            invoiceData.routing,
+            invoiceData.issue_date
+        )
+
+        // Sheets (Reuse same auth client)
+        sendEvent({ type: 'log', message: `   Appending to Sheets...` })
+        await appendToSheet(auth, invoiceData, driveResult.webViewLink, senderEmail)
+
+        results.push({
+            status: 'success',
+            id: invoiceData.invoice_number,
+            supplier: invoiceData.supplier_name,
+            amount: invoiceData.total_amount,
+            date: invoiceData.issue_date,
+            fileLink: driveResult.webViewLink
+        })
+    } else {
+        const reason = processingResult.reason || "Unknown Reason"
+        sendEvent({ type: 'log', message: `⚠️ Skipped "${filename}": ${reason}` })
+        results.push({ status: 'skipped', reason: reason, filename })
     }
 }
 

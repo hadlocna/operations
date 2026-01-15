@@ -116,7 +116,7 @@ async function getOrCreateFolder(drive, folderName, parentId) {
 /**
  * Append invoice data to Google Sheet
  */
-export async function appendToSheet(auth, invoiceData, driveLink) {
+export async function appendToSheet(auth, invoiceData, driveLink, senderEmail) {
     const sheets = google.sheets({ version: 'v4', auth })
     const spreadsheetId = process.env.GOOGLE_SHEET_ID
 
@@ -130,7 +130,7 @@ export async function appendToSheet(auth, invoiceData, driveLink) {
         formattedDate = `${day}-${month}-${year}`
     }
 
-    // Prepare row data (Columns A-J)
+    // Prepare row data (Columns A-K)
     const rowData = [
         invoiceData.routing.folderName || 'Unknown',      // A: Company
         invoiceData.supplier_name || '',                  // B: Supplier
@@ -141,7 +141,8 @@ export async function appendToSheet(auth, invoiceData, driveLink) {
         invoiceData.vat_amount || 0,                      // G: VAT Amount
         invoiceData.total_amount || 0,                    // H: Incl VAT
         driveLink || '',                                  // I: Invoice Link
-        invoiceData.notes || ''                           // J: Notes
+        invoiceData.notes || '',                          // J: Notes
+        senderEmail || ''                                 // K: Sender Email
     ]
 
     try {
@@ -163,5 +164,35 @@ export async function appendToSheet(auth, invoiceData, driveLink) {
         console.error('Sheet Append Error:', e)
         // Don't fail the whole process if sheet fails
         return { error: e.message }
+    }
+}
+
+/**
+ * Check if invoice number already exists in Google Sheet (Column C)
+ */
+export async function checkIfInvoiceExists(auth, invoiceNumber) {
+    if (!invoiceNumber) return false // Cannot check without number
+
+    // Normalize string for comparison
+    const target = String(invoiceNumber).trim().toLowerCase()
+
+    try {
+        const sheets = google.sheets({ version: 'v4', auth })
+        const spreadsheetId = process.env.GOOGLE_SHEET_ID
+
+        // Fetch Column C (Invoice Numbers)
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range: 'Sheet1!C:C',
+        })
+
+        const rows = response.data.values || []
+        // Flatten and search
+        const exists = rows.flat().some(cell => String(cell).trim().toLowerCase() === target)
+
+        return exists
+    } catch (e) {
+        console.error('Duplicate Check Error:', e.message)
+        return false // Fail open (don't block if check fails)
     }
 }

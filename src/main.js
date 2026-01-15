@@ -327,162 +327,165 @@ function attachDashboardListeners() {
     })
   })
 
-  // Config Button (if present)
   const configBtn = document.getElementById('configBtn')
   if (configBtn) {
     configBtn.addEventListener('click', () => {
-      window.location.href = '/auth/google'
-      // Listen for "Connect Now" or header "Connect"
-      document.addEventListener('click', (e) => {
-        if (e.target.id === 'configBtn' || e.target.id === 'connectHeaderBtn' || e.target.textContent.includes('Connect Now') || (e.target.tagName === 'BUTTON' && e.target.textContent.trim() === 'CONNECT')) {
-          // Pass username to Auth endpoint
-          const user = state.currentUser || localStorage.getItem('currentUser')
-          window.location.href = `/auth/google?username=${user}`
-        }
-      })
+      // Pass username to Auth endpoint
+      const user = state.currentUser || localStorage.getItem('currentUser')
+      window.location.href = `/auth/google?username=${user}`
+    })
+  }
 
-      // Start Scan
-      document.getElementById('triggerBtn')?.addEventListener('click', async () => {
-        const btn = document.getElementById('triggerBtn')
-        const statusEl = document.getElementById('scanStatus') // Assuming this element exists or will be added
+  // Connect Button Global Listener (for header/other buttons)
+  document.addEventListener('click', (e) => {
+    if (e.target.id === 'connectHeaderBtn' || e.target.textContent.includes('Connect Now') || (e.target.tagName === 'BUTTON' && e.target.textContent.trim() === 'CONNECT')) {
+      // Pass username to Auth endpoint
+      const user = state.currentUser || localStorage.getItem('currentUser')
+      window.location.href = `/auth/google?username=${user}`
+    }
+  })
 
-        // UI Reset
-        btn.disabled = true
-        btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Scanning...`
-        state.logs = []
-        // renderLogs() // Assuming this function exists or will be added
+  // Start Scan
+  const triggerBtn = document.getElementById('triggerBtn')
+  if (triggerBtn) {
+    triggerBtn.addEventListener('click', async () => {
+      const btn = triggerBtn
+      // ... (Scan logic)
+      // UI Reset
+      btn.disabled = true
+      btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Scanning...`
+      state.logs = []
 
-        // Connect to SSE
-        const user = state.currentUser || localStorage.getItem('currentUser')
-        const dateFrom = document.getElementById('date-from').value
-        const dateTo = document.getElementById('date-to').value // Assuming date-to is also used
-        const eventSource = new EventSource(`/api/scan/stream?dateFrom=${dateFrom}&dateTo=${dateTo}&username=${user}`)
+      // Connect to SSE
+      const user = state.currentUser || localStorage.getItem('currentUser')
+      const dateFrom = document.getElementById('date-from').value
+      const dateTo = document.getElementById('date-to')?.value || ''
+      const eventSource = new EventSource(`/api/scan/stream?dateFrom=${dateFrom}&dateTo=${dateTo}&username=${user}`)
 
-        const liveLogsContainer = document.getElementById('liveLogsContainer') // Assuming this element exists or will be added
-        const liveLogs = document.getElementById('liveLogs') // Assuming this element exists or will be added
-        const scanSpinner = document.getElementById('scanSpinner') // Assuming this element exists or will be added
+      const liveLogsContainer = document.getElementById('liveLogsContainer')
+      const liveLogs = document.getElementById('liveLogs')
+      const scanSpinner = document.getElementById('scanSpinner')
 
-        if (liveLogsContainer) liveLogsContainer.classList.remove('hidden')
-        if (scanSpinner) scanSpinner.classList.remove('hidden')
-        if (liveLogs) liveLogs.innerHTML = `<div class="text-slate-500 italic">Connecting to scanner stream...</div>`
+      if (liveLogsContainer) liveLogsContainer.classList.remove('hidden')
+      if (scanSpinner) scanSpinner.classList.remove('hidden')
+      if (liveLogs) liveLogs.innerHTML = `<div class="text-slate-500 italic">Connecting to scanner stream...</div>`
 
-        eventSource.onmessage = (event) => {
-          const data = JSON.parse(event.data)
+      eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data)
 
-          if (data.type === 'log') {
-            const line = document.createElement('div')
-            line.innerHTML = `<span class="opacity-50">[${new Date().toLocaleTimeString()}]</span> ${data.message}`
-            if (liveLogs) {
-              liveLogs.appendChild(line)
-              liveLogs.scrollTop = liveLogs.scrollHeight // Auto-scroll
-            }
-          }
-          else if (data.type === 'error') {
-            const line = document.createElement('div')
-            line.className = 'text-red-500 font-bold'
-            line.innerText = `ERROR: ${data.message}`
-            if (liveLogs) liveLogs.appendChild(line)
-            eventSource.close()
-            finalizeScan(btn)
-          }
-          else if (data.type === 'complete') {
-            const line = document.createElement('div')
-            line.className = 'text-white font-bold mt-4 pt-2 border-t border-slate-700'
-            line.innerText = `SCAN COMPLETE. Processed: ${data.summary.processed.length}, Skipped: ${data.summary.skipped.length}, Errors: ${data.summary.errors.length}`
-            if (liveLogs) liveLogs.appendChild(line)
-
-            // Update State logs
-            if (data.summary.processed.length > 0) {
-              const newLogs = data.summary.processed.map(item => ({
-                id: item.id || 'N/A',
-                supplier: item.supplier || 'Unknown',
-                date: item.date || 'N/A',
-                amount: typeof item.amount === 'number' ? item.amount.toFixed(2) : item.amount,
-                status: 'success',
-                fileLink: item.fileLink
-              }))
-              state.logs = [...newLogs, ...state.logs]
-              localStorage.setItem('ops_logs', JSON.stringify(state.logs))
-            }
-
-            eventSource.close()
-            finalizeScan(btn)
-            if (scanSpinner) scanSpinner.classList.add('hidden')
-
-            showToast('Scan Completed')
-            // Delay reload so they can read logs
-            setTimeout(() => renderDashboard(), 3000)
-          }
-        }
-
-        eventSource.onerror = (err) => {
-          console.error("EventSource failed:", err)
+        if (data.type === 'log') {
           const line = document.createElement('div')
-          line.className = 'text-amber-500'
-          line.innerText = `Connection closed (possibly finished or timed out).`
+          line.innerHTML = `<span class="opacity-50">[${new Date().toLocaleTimeString()}]</span> ${data.message}`
+          if (liveLogs) {
+            liveLogs.appendChild(line)
+            liveLogs.scrollTop = liveLogs.scrollHeight // Auto-scroll
+          }
+        }
+        else if (data.type === 'error') {
+          const line = document.createElement('div')
+          line.className = 'text-red-500 font-bold'
+          line.innerText = `ERROR: ${data.message}`
           if (liveLogs) liveLogs.appendChild(line)
           eventSource.close()
           finalizeScan(btn)
         }
-      })
+        else if (data.type === 'complete') {
+          const line = document.createElement('div')
+          line.className = 'text-white font-bold mt-4 pt-2 border-t border-slate-700'
+          line.innerText = `SCAN COMPLETE. Processed: ${data.summary.processed.length}, Skipped: ${data.summary.skipped.length}, Errors: ${data.summary.errors.length}`
+          if (liveLogs) liveLogs.appendChild(line)
+
+          // Update State logs
+          if (data.summary.processed.length > 0) {
+            const newLogs = data.summary.processed.map(item => ({
+              id: item.id || 'N/A',
+              supplier: item.supplier || 'Unknown',
+              date: item.date || 'N/A',
+              amount: typeof item.amount === 'number' ? item.amount.toFixed(2) : item.amount,
+              status: 'success',
+              fileLink: item.fileLink
+            }))
+            state.logs = [...newLogs, ...state.logs]
+            localStorage.setItem('ops_logs', JSON.stringify(state.logs))
+          }
+
+          eventSource.close()
+          finalizeScan(btn)
+          if (scanSpinner) scanSpinner.classList.add('hidden')
+
+          showToast('Scan Completed')
+          // Delay reload so they can read logs
+          setTimeout(() => renderDashboard(), 3000)
+        }
+      }
+
+      eventSource.onerror = (err) => {
+        console.error("EventSource failed:", err)
+        const line = document.createElement('div')
+        line.className = 'text-amber-500'
+        line.innerText = `Connection closed (possibly finished or timed out).`
+        if (liveLogs) liveLogs.appendChild(line)
+        eventSource.close()
+        finalizeScan(btn)
+      }
+    })
+  }
+
+
+
+  function finalizeScan(btn) {
+    btn.disabled = false
+    btn.innerHTML = `<i data-lucide="play" class="w-4 h-4"></i> Start Live Scan`
+    createIcons()
+  }
+
+  function showToast(msg) {
+    const toast = document.getElementById('toast')
+    const toastMsg = document.getElementById('toastMessage')
+    if (!toast || !toastMsg) return
+
+    toastMsg.innerText = msg
+    toast.classList.remove('translate-y-24')
+
+    setTimeout(() => {
+      toast.classList.add('translate-y-24')
+    }, 3000)
+  }
+
+  // ==================== INIT ====================
+  async function checkStatus() {
+    const user = state.currentUser || localStorage.getItem('currentUser')
+    if (!user) return
+
+    try {
+      const res = await fetch(`/api/status?username=${user}`)
+      const data = await res.json()
+      // Unified status
+      state.oauth.connected = data.connected
+      state.oauth.email = data.email || null
+    } catch (e) {
+      console.error('Failed to fetch status')
     }
-  })
-}
-
-
-
-function finalizeScan(btn) {
-  btn.disabled = false
-  btn.innerHTML = `<i data-lucide="play" class="w-4 h-4"></i> Start Live Scan`
-  createIcons()
-}
-
-function showToast(msg) {
-  const toast = document.getElementById('toast')
-  const toastMsg = document.getElementById('toastMessage')
-  if (!toast || !toastMsg) return
-
-  toastMsg.innerText = msg
-  toast.classList.remove('translate-y-24')
-
-  setTimeout(() => {
-    toast.classList.add('translate-y-24')
-  }, 3000)
-}
-
-// ==================== INIT ====================
-async function checkStatus() {
-  const user = state.currentUser || localStorage.getItem('currentUser')
-  if (!user) return
-
-  try {
-    const res = await fetch(`/api/status?username=${user}`)
-    const data = await res.json()
-    // Unified status
-    state.oauth.connected = data.connected
-    state.oauth.email = data.email || null
-  } catch (e) {
-    console.error('Failed to fetch status')
-  }
-}
-
-async function init() {
-  // Check for successful oauth return
-  const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get('oauth') === 'success') {
-    state.isLoggedIn = true
-    localStorage.setItem('isLoggedIn', 'true')
-    window.history.replaceState({}, document.title, "/") // Clean URL
   }
 
-  if (localStorage.getItem('isLoggedIn') === 'true') {
-    state.isLoggedIn = true
-    state.currentUser = localStorage.getItem('currentUser')
-    await checkStatus() // Sync with backend
-    renderDashboard()
-  } else {
-    renderLogin()
-  }
-}
+  async function init() {
+    // Check for successful oauth return
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('oauth') === 'success') {
+      state.isLoggedIn = true
+      localStorage.setItem('isLoggedIn', 'true')
+      window.history.replaceState({}, document.title, "/") // Clean URL
+    }
 
-init()
+    if (localStorage.getItem('isLoggedIn') === 'true') {
+      state.isLoggedIn = true
+      state.currentUser = localStorage.getItem('currentUser')
+      await checkStatus() // Sync with backend
+      renderDashboard()
+    } else {
+      renderLogin()
+    }
+  }
+
+  init()
+})
