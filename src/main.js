@@ -96,8 +96,8 @@ function renderDashboard() {
                 <span class="text-slate-500 uppercase tracking-wider">${isConnected && state.oauth.email ? state.oauth.email : 'Not Connected'}</span>
               </div>
             </div>
-            <button id="logout-btn" class="w-9 h-9 bg-gradient-to-br from-blue-50 to-blue-100 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs border border-blue-200 hover:shadow-md transition-all cursor-pointer">
-              LN
+            <button id="logout-btn" class="w-9 h-9 bg-gradient-to-br from-blue-50 to-blue-100 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs border border-blue-200 hover:shadow-md transition-all cursor-pointer uppercase">
+              ${state.currentUser ? state.currentUser.charAt(0) : 'U'}
             </button>
           </div>
         </div>
@@ -106,17 +106,8 @@ function renderDashboard() {
       <main class="max-w-7xl mx-auto px-4 mt-8">
         
         <!-- Warning Alert (Only if Not connected) -->
-        ${!isConnected ? `
-        <div class="mb-8 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-4 animate-fade-in-up">
-          <div class="text-amber-600 mt-0.5">
-            <i data-lucide="alert-triangle" class="w-5 h-5"></i>
-          </div>
-          <div>
-            <h4 class="font-semibold text-amber-900 text-sm">System Configuration Required</h4>
-            <p class="text-amber-700 text-xs mt-1">Google Services Disconnected. Please connect to enable scanning.</p>
-          </div>
-          <button id="configBtn" class="ml-auto text-xs font-bold text-amber-800 bg-amber-100 px-3 py-1.5 rounded-lg hover:bg-amber-200 transition-colors uppercase tracking-tight">Connect Now</button>
-        </div>` : ''}
+        <!-- Warning Alert Removed per user request -->
+
 
         <!-- LIVE LOGS TERMINAL -->
         <div id="liveLogsContainer" class="mb-8 hidden">
