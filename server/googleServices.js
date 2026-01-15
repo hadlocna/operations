@@ -25,14 +25,23 @@ export async function uploadToDrive(auth, fileBuffer, filename, routingData, iss
 
     const rootFolderId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID
 
+    if (!rootFolderId) {
+        throw new Error('GOOGLE_DRIVE_ROOT_FOLDER_ID environment variable is not set')
+    }
+
+    console.log(`[DRIVE] Starting upload. Root: ${rootFolderId}, Category: ${routingData.category}, Company: ${routingData.folderName}, Month: ${monthFolder}`)
+
     // 1. Get/Create Category Folder (e.g., "SPVs_AgriOps")
     const categoryFolderId = await getOrCreateFolder(drive, routingData.category, rootFolderId)
+    console.log(`[DRIVE] Category folder: ${categoryFolderId}`)
 
     // 2. Get/Create Company Folder (e.g., "AMANDEL")
     const companyFolderId = await getOrCreateFolder(drive, routingData.folderName, categoryFolderId)
+    console.log(`[DRIVE] Company folder: ${companyFolderId}`)
 
     // 3. Get/Create Month Folder (e.g., "03 - March")
     const finalFolderId = await getOrCreateFolder(drive, monthFolder, companyFolderId)
+    console.log(`[DRIVE] Month folder: ${finalFolderId}`)
 
     // 4. Upload File
     const fileMetadata = {
