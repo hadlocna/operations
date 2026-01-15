@@ -212,7 +212,8 @@ app.get('/api/scan/stream', async (req, res) => {
             sendEvent({ type: 'log', message: `Verifying access to Drive folder...` })
             const folderCheck = await drive.files.get({
                 fileId: rootFolderId,
-                fields: 'id, name, mimeType'
+                fields: 'id, name, mimeType',
+                supportsAllDrives: true  // Required for Shared Drives
             })
             sendEvent({ type: 'log', message: `✓ Drive folder verified: "${folderCheck.data.name}"` })
         } catch (driveError) {
